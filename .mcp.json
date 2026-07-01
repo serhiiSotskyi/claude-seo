@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dataforseo": {
+      "type": "http",
+      "url": "https://dataforseo-mcp-production.up.railway.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${DATAFORSEO_MCP_TOKEN}"
+      },
+      "timeout": 600000
+    }
+  }
+}
