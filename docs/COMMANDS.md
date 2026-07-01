@@ -264,7 +264,9 @@ Programmatic SEO analysis and planning for pages generated at scale.
 
 Live SEO data via DataForSEO MCP server (extension). 22 commands across 9 API modules.
 
-**Prerequisites:** DataForSEO extension installed (`./extensions/dataforseo/install.sh`)
+**Prerequisites:** In Claude Team, the organization DataForSEO connector must be
+connected and enabled. In Claude Code/local development, install the extension
+with `./extensions/dataforseo/install.sh`.
 
 **SERP Analysis:**
 ```

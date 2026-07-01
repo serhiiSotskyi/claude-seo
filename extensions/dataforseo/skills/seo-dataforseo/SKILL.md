@@ -5,10 +5,11 @@ description: >
   YouTube), keyword research (volume, difficulty, intent, trends), backlink
   profiles, on-page analysis (Lighthouse, content parsing), competitor analysis,
   content analysis, business listings, AI visibility (ChatGPT scraper, LLM
-  mention tracking), and domain analytics. Requires DataForSEO extension
-  installed. Use when user says "dataforseo", "live SERP", "keyword volume",
-  "backlink data", "competitor data", "AI visibility check", "LLM mentions",
-  or "real search data".
+  mention tracking), and domain analytics. Requires the organization
+  DataForSEO connector to be connected and enabled in Claude Team, or the local
+  DataForSEO extension in Claude Code. Use when user says "dataforseo", "live
+  SERP", "keyword volume", "backlink data", "competitor data", "AI visibility
+  check", "LLM mentions", or "real search data".
 ---
 
 # DataForSEO — Live SEO Data (Extension)
@@ -20,15 +21,19 @@ listings, AI visibility checking, and LLM mention tracking across
 
 ## Prerequisites
 
-This skill requires the DataForSEO extension to be installed:
+In Claude Team / Claude web / Claude Desktop, this skill requires the
+organization **DataForSEO** connector to be connected and enabled for the
+conversation. Do not ask nontechnical users to run terminal commands.
+
+For Claude Code/local development only, this skill can also be installed with:
 ```bash
 ./extensions/dataforseo/install.sh
 ```
 
 **Check availability:** Before using any DataForSEO tool, verify the MCP server
 is connected by checking if `serp_organic_live_advanced` or any DataForSEO tool
-is available. If tools are not available, inform the user the extension is not
-installed and provide install instructions.
+is available. If tools are not available, ask the user to enable the DataForSEO
+connector from the Claude `+` menu or contact the Claude Team workspace owner.
 
 ## API Credit Awareness
 

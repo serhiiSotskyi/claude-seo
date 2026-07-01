@@ -232,11 +232,11 @@ Optional add-ons that integrate external data sources via MCP servers.
 
 Live SERP data, keyword research, backlinks, on-page analysis, content analysis, business listings, AI visibility checking, and LLM mention tracking. 22 commands across 9 API modules.
 
-For team-wide Claude Code usage backed by the central Railway MCP service, see
+For team-wide Claude web/Desktop usage backed by the central Railway MCP service, see
 [Claude Team DataForSEO Setup](docs/CLAUDE-TEAM-DATAFORSEO.md).
 
 ```bash
-# Install (requires DataForSEO account)
+# Claude Code/local development only
 ./extensions/dataforseo/install.sh
 ```
 
