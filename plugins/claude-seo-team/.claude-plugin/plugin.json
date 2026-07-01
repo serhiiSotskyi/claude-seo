@@ -1,0 +1,25 @@
+{
+  "name": "claude-seo-team",
+  "version": "1.3.3",
+  "description": "SEO analysis workflows for Claude Team, including technical SEO, content quality, schema, sitemaps, images, GEO, and DataForSEO live data guidance. DataForSEO is connected separately through the organization connector.",
+  "author": {
+    "name": "Summon"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/serhiiSotskyi/claude-seo",
+  "skills": [
+    "./skills/",
+    "./seo/",
+    "./extensions/dataforseo/skills/seo-dataforseo/"
+  ],
+  "agents": [
+    "./agents/seo-technical.md",
+    "./agents/seo-content.md",
+    "./agents/seo-schema.md",
+    "./agents/seo-sitemap.md",
+    "./agents/seo-performance.md",
+    "./agents/seo-visual.md",
+    "./agents/seo-geo.md",
+    "./extensions/dataforseo/agents/seo-dataforseo.md"
+  ]
+}

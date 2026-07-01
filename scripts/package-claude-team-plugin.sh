@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
 BUILD_DIR="$DIST_DIR/claude-seo-team-plugin"
 ZIP_PATH="$DIST_DIR/claude-seo-team-plugin.zip"
+SYNC_DIR="$ROOT_DIR/plugins/claude-seo-team"
 
 rm -rf "$BUILD_DIR" "$ZIP_PATH"
 mkdir -p "$BUILD_DIR/.claude-plugin"
@@ -26,6 +27,10 @@ cp "$ROOT_DIR/extensions/dataforseo/agents/seo-dataforseo.md" \
 find "$BUILD_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} +
 find "$BUILD_DIR" -type f \( -name "*.pyc" -o -name ".DS_Store" \) -delete
 rm -f "$BUILD_DIR/scripts/package-claude-team-plugin.sh"
+
+rm -rf "$SYNC_DIR"
+mkdir -p "$(dirname "$SYNC_DIR")"
+cp -R "$BUILD_DIR" "$SYNC_DIR"
 
 (
   cd "$DIST_DIR"
