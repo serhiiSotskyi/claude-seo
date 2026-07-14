@@ -1,7 +1,7 @@
 {
   "name": "claude-seo-team",
-  "version": "1.3.3",
-  "description": "SEO analysis workflows for Claude Team, including technical SEO, content quality, schema, sitemaps, images, GEO, and DataForSEO live data guidance. DataForSEO is connected separately through the organization connector.",
+  "version": "1.4.0",
+  "description": "SEO analysis workflows for Claude Team, including technical SEO, content quality, schema, sitemaps, images, GEO, DataForSEO live data guidance, and Summon first-party performance workflows. External data connectors are connected separately through organization connectors.",
   "author": {
     "name": "Summon"
   },
@@ -10,7 +10,8 @@
   "skills": [
     "./skills/",
     "./seo/",
-    "./extensions/dataforseo/skills/seo-dataforseo/"
+    "./extensions/dataforseo/skills/seo-dataforseo/",
+    "./extensions/google-performance/skills/seo-google-performance/"
   ],
   "agents": [
     "./agents/seo-technical.md",
@@ -20,6 +21,7 @@
     "./agents/seo-performance.md",
     "./agents/seo-visual.md",
     "./agents/seo-geo.md",
-    "./extensions/dataforseo/agents/seo-dataforseo.md"
+    "./extensions/dataforseo/agents/seo-dataforseo.md",
+    "./extensions/google-performance/agents/seo-google-performance.md"
   ]
 }

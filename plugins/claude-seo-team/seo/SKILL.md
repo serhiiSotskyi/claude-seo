@@ -37,6 +37,8 @@ and 7 subagents (+ optional extension sub-skills).
 | `/seo competitor-pages [url\|generate]` | Competitor comparison page generation |
 | `/seo hreflang [url]` | Hreflang/i18n SEO audit and generation |
 | `/seo dataforseo [command]` | Live SEO data via DataForSEO (extension) |
+| `/seo google-performance [command]` | First-party GA4, GSC, and Google Ads data (extension) |
+| `/summon seo [workflow]` | Summon-specific SEO/GEO delivery workflow |
 
 ## Orchestration Logic
 
@@ -98,7 +100,7 @@ Weighted aggregate of all categories:
 
 ## Sub-Skills
 
-This skill orchestrates 12 specialized sub-skills (+ 1 extension):
+This skill orchestrates 12 specialized sub-skills (+ 2 extensions and 1 Summon service workflow):
 
 1. **seo-audit** — Full website audit with parallel delegation
 2. **seo-page** — Deep single-page analysis
@@ -113,6 +115,8 @@ This skill orchestrates 12 specialized sub-skills (+ 1 extension):
 11. **seo-competitor-pages** — Competitor comparison page generation
 12. **seo-hreflang** — Hreflang/i18n SEO audit and generation
 13. **seo-dataforseo** — Live SEO data via DataForSEO MCP (extension)
+14. **seo-google-performance** — GA4, GSC, and Google Ads read-only performance data (extension)
+15. **summon-seo-service** — Summon-specific SEO/GEO client delivery workflow
 
 ## Subagents
 
@@ -125,3 +129,4 @@ For parallel analysis during audits:
 - `seo-visual` — Screenshots, mobile testing, above-fold
 - `seo-geo` — AI crawler access, llms.txt, citability, brand mention signals
 - `seo-dataforseo` — Live SERP, keyword, backlink, local SEO data (extension, optional)
+- `seo-google-performance` — Read-only GA4, GSC, Google Ads evidence for SEO/GEO work (extension, optional)

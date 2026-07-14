@@ -11,6 +11,9 @@ rm -rf "$BUILD_DIR" "$ZIP_PATH"
 mkdir -p "$BUILD_DIR/.claude-plugin"
 mkdir -p "$BUILD_DIR/extensions/dataforseo/skills"
 mkdir -p "$BUILD_DIR/extensions/dataforseo/agents"
+mkdir -p "$BUILD_DIR/extensions/google-performance/skills"
+mkdir -p "$BUILD_DIR/extensions/google-performance/agents"
+mkdir -p "$BUILD_DIR/extensions/google-performance/docs"
 
 cp "$ROOT_DIR/packaging/claude-team-plugin/plugin.json" \
   "$BUILD_DIR/.claude-plugin/plugin.json"
@@ -19,10 +22,19 @@ cp -R "$ROOT_DIR/skills" "$BUILD_DIR/skills"
 cp -R "$ROOT_DIR/agents" "$BUILD_DIR/agents"
 cp -R "$ROOT_DIR/scripts" "$BUILD_DIR/scripts"
 cp -R "$ROOT_DIR/schema" "$BUILD_DIR/schema"
+cp -R "$ROOT_DIR/templates" "$BUILD_DIR/templates"
 cp -R "$ROOT_DIR/extensions/dataforseo/skills/seo-dataforseo" \
   "$BUILD_DIR/extensions/dataforseo/skills/seo-dataforseo"
 cp "$ROOT_DIR/extensions/dataforseo/agents/seo-dataforseo.md" \
   "$BUILD_DIR/extensions/dataforseo/agents/seo-dataforseo.md"
+cp "$ROOT_DIR/extensions/google-performance/README.md" \
+  "$BUILD_DIR/extensions/google-performance/README.md"
+cp -R "$ROOT_DIR/extensions/google-performance/docs/." \
+  "$BUILD_DIR/extensions/google-performance/docs"
+cp -R "$ROOT_DIR/extensions/google-performance/skills/seo-google-performance" \
+  "$BUILD_DIR/extensions/google-performance/skills/seo-google-performance"
+cp "$ROOT_DIR/extensions/google-performance/agents/seo-google-performance.md" \
+  "$BUILD_DIR/extensions/google-performance/agents/seo-google-performance.md"
 
 find "$BUILD_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} +
 find "$BUILD_DIR" -type f \( -name "*.pyc" -o -name ".DS_Store" \) -delete

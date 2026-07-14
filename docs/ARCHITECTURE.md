@@ -219,6 +219,7 @@ extensions/
 | Extension | Package | What it Adds |
 |-----------|---------|-------------|
 | **DataForSEO** | `dataforseo-mcp-server` | 22 commands: live SERP, keywords, backlinks, on-page analysis, content analysis, business listings, AI visibility, LLM mentions |
+| **Google Performance** | `summon-google-performance-mcp` | Read-only GA4, Google Search Console, and Google Ads reporting for SEO/GEO and PPC-to-SEO workflows |
 
 ### Extension Convention
 
