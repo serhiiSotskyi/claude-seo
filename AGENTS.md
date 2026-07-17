@@ -52,9 +52,9 @@ in case a recipe needs a specific call.
 
 ## Overview
 
-Claude SEO is a Tier 4 SEO analysis skill with 25 sub-skills (21 core + 1 orchestrator +
-1 framework integration + 2 extension mirrors), 18 sub-agents (15 core + 1 framework
-integration + 2 extension mirrors), and 50 Python execution scripts.
+Summon SEO is a Tier 4 SEO analysis skill with 27 sub-skills (21 core + 1 orchestrator +
+1 framework integration + 4 extension skills), 19 sub-agents (15 core + 1 framework
+integration + 3 extension agents), and 50 Python execution scripts.
 
 ## Quick Reference
 
@@ -81,6 +81,8 @@ integration + 2 extension mirrors), and 50 Python execution scripts.
 | `/seo maps [cmd] [args]` | Maps intelligence (geo-grid, GBP audit, competitors) |
 | `/seo hreflang <url>` | Hreflang/i18n SEO audit, cultural profiles, content parity |
 | `/seo google [cmd] [url]` | Google SEO APIs (GSC, PageSpeed, CrUX, Indexing, GA4) |
+| `/seo-google-performance [report] [client-key]` | Read-only GA4, GSC, and Google Ads reporting |
+| `/summon-seo-service [workflow] [client\|domain]` | Summon agency intake, baseline, PPC-to-SEO, QA, and reporting |
 | `/seo backlinks <url>` | Backlink profile analysis |
 | `/seo backlinks setup` | Setup free backlink APIs |
 | `/seo backlinks verify <url>` | Verify known backlinks still exist |
@@ -129,7 +131,7 @@ bash install.sh
 ## Architecture
 
 ```
-skills/                    # 25 sub-skills (auto-discovered)
+skills/                    # 27 sub-skills (auto-discovered)
   seo/SKILL.md            # Main orchestrator + routing
   seo-cluster/            # Semantic clustering (v1.9.0)
   seo-sxo/                # Search Experience Optimization (v1.9.0)
@@ -153,7 +155,9 @@ skills/                    # 25 sub-skills (auto-discovered)
   seo-competitor-pages/   # Competitor pages
   seo-dataforseo/         # DataForSEO (extension)
   seo-image-gen/          # AI images (extension)
-agents/                    # 18 subagents
+  seo-google-performance/ # Summon first-party Google connector
+  summon-seo-service/     # Summon delivery workflow and templates
+agents/                    # 19 subagents
 scripts/                   # 50 Python scripts
 schema/                    # JSON-LD templates
 extensions/                # Optional add-ons (DataForSEO, Firecrawl, Banana, ASO)

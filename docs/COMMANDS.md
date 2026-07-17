@@ -2,7 +2,19 @@
 
 ## Overview
 
-All Claude SEO commands start with `/seo` followed by a subcommand.
+Core SEO commands start with `/seo`. Summon delivery and organization connector
+commands are exposed as their own skills.
+
+### `/summon-seo-service <workflow> [client-or-domain]`
+
+Run Summon's controlled client delivery workflow. Workflows: `intake`, `baseline`,
+`technical-audit`, `content-audit`, `ppc-to-seo`, `ai-visibility-baseline`,
+`implementation-brief`, `implementation-qa`, and `monthly-report`.
+
+### `/seo-google-performance <report> <client-key>`
+
+Use the read-only organization connector for GA4, Search Console, Google Ads,
+brand/non-brand analysis, and PPC-to-SEO evidence.
 
 ## Command List
 

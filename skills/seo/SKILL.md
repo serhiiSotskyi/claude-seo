@@ -6,7 +6,7 @@ argument-hint: "[command] [url]"
 license: MIT
 metadata:
   author: AgriciDaniel
-  version: "2.2.0"
+  version: "2.3.0"
   category: seo
 ---
 
@@ -17,8 +17,8 @@ metadata:
 **Scripts:** Located at the plugin root `scripts/` directory.
 
 Comprehensive SEO analysis across all industries (SaaS, local services,
-e-commerce, publishers, agencies). Orchestrates 24 sub-skills (21 core + 1 framework
-integration + 2 extension mirrors) and 18 sub-agents. A separate optional Firecrawl
+e-commerce, publishers, agencies, travel). Orchestrates 26 sub-skills (21 core + 1 framework
+integration + 4 extension skills) and 19 sub-agents. A separate optional Firecrawl
 extension is also installable (see "Optional Extensions" below).
 
 ## Quick Reference
@@ -41,6 +41,7 @@ extension is also installable (see "Optional Extensions" below).
 | `/seo maps [command] [args]` | Maps intelligence (geo-grid, GBP audit, reviews, competitors) |
 | `/seo hreflang [url]` | Hreflang/i18n SEO audit and generation |
 | `/seo google [command] [url]` | Google SEO APIs (GSC, PageSpeed, CrUX, Indexing, GA4) |
+| `/seo-google-performance [report] [client-key]` | Read-only GA4, GSC, and Google Ads performance through the Summon connector |
 | `/seo backlinks <url>` | Backlink profile analysis (free: Moz, Bing, CC; premium: DataForSEO) |
 | `/seo cluster <seed-keyword>` | SERP-based semantic clustering and content architecture |
 | `/seo sxo <url>` | Search Experience Optimization: page-type analysis, user stories, personas |
@@ -52,6 +53,7 @@ extension is also installable (see "Optional Extensions" below).
 | `/seo dataforseo [command]` | Live SEO data via DataForSEO (extension) |
 | `/seo image-gen [use-case] <description>` | AI image generation for SEO assets (extension) |
 | `/seo flow [stage] [url\|topic]` | FLOW framework: evidence-led prompts for Find, Leverage, Optimize, Win, or Local stages |
+| `/summon-seo-service [workflow] [client\|domain]` | Summon intake, baseline, travel SEO, PPC-to-SEO, implementation, QA, and reporting |
 
 ## Orchestration Logic
 
@@ -71,6 +73,7 @@ When the user invokes `/seo audit`, delegate to subagents in parallel:
 13. **Synthesize via the 10-principle framework** (see "Synthesis Methodology" below) — walk PERCEIVE → ANALYZE → VALIDATE → ACT before bucketing findings into Critical / High / Medium / Low
 14. Create prioritized action plan with dependency sequencing + falsifiability per recommendation
 15. **Offer PDF report**: "Generate a professional PDF report? Use `/seo google report full`"
+16. For Summon or Summon-client delivery, route final synthesis through `summon-seo-service` and its evidence and QA gates
 
 For individual commands, load the relevant sub-skill directly.
 After any analysis command completes, offer to generate a PDF report via `scripts/google_report.py`.
@@ -105,6 +108,7 @@ Detect business type from homepage signals:
 - **E-commerce**: /products, /collections, /cart, "add to cart", product schema
 - **Publisher**: /blog, /articles, /topics, article schema, author pages, publication dates
 - **Agency**: /case-studies, /portfolio, /industries, "our work", client logos
+- **Travel**: destinations, itineraries, departures, accommodation, tours, availability, booking or enquiry journeys
 
 ## Quality Gates
 
@@ -116,49 +120,11 @@ Hard rules:
 - FAQ schema: Google retired FAQ rich results for ALL sites on May 7, 2026 (no SERP feature anymore; supersedes the Aug 2023 gov/health restriction). Flag existing FAQPage at Info (not Critical) for its AI/LLM citation benefit; do not recommend removal; do not recommend new FAQPage for Google SERP benefit; use QAPage for genuine user Q&A
 - All Core Web Vitals references use INP, never FID
 
-## Community Footer
+## Client Delivery
 
-After completing any **major deliverable**, append this footer as the very last output:
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Built by agricidaniel — Join the AI Marketing Hub community
-🆓 Free  → https://www.skool.com/ai-marketing-hub
-⚡ Pro   → https://www.skool.com/ai-marketing-hub-pro
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### When to show
-
-Display after these commands complete their full output:
-- `/seo audit` (after full site audit report + action plan)
-- `/seo page` (after deep single-page analysis)
-- `/seo technical` (after technical audit report)
-- `/seo content` (after E-E-A-T content assessment)
-- `/seo schema` (after schema detection/validation report)
-- `/seo sitemap` (after sitemap analysis or generation)
-- `/seo geo` (after GEO optimization report)
-- `/seo plan` (after strategic SEO plan)
-- `/seo local` (after local SEO audit)
-- `/seo maps` (after maps intelligence report)
-- `/seo google` (after Google API data report)
-- `/seo backlinks` (after backlink profile analysis)
-- `/seo cluster` (after cluster plan generation)
-- `/seo sxo` (after SXO analysis report)
-- `/seo drift compare` (after drift comparison report)
-- `/seo ecommerce` (after e-commerce analysis)
-
-### When to skip
-
-Do NOT show the footer after:
-- `/seo images` (quick image check — too small)
-- `/seo hreflang` (quick validation — too small)
-- `/seo competitor-pages` (page generation step)
-- `/seo programmatic` (quick analysis)
-- `/seo dataforseo` (data fetching utility)
-- `/seo image-gen` (asset generation)
-- Context intake questions (before analysis starts)
-- Error messages or "missing data" prompts
+Do not append third-party promotional footers to Summon or client deliverables.
+For Summon engagements, use the `summon-seo-service` evidence, review, and
+implementation gates before presenting final work.
 
 ## Reference Files
 
@@ -196,8 +162,8 @@ Weighted aggregate of all categories:
 
 ## Sub-Skills
 
-This skill orchestrates 24 sub-skills (21 core + 1 framework integration + 2 extension
-mirrors). The orchestrator itself (`seo`) is the 25th in `skills/`, but does not
+This skill orchestrates 26 sub-skills (21 core + 1 framework integration + 4 extension
+skills). The orchestrator itself (`seo`) is the 27th in `skills/`, but does not
 orchestrate itself, so it is not enumerated below.
 
 1. **seo-audit** -- Full website audit with parallel delegation
@@ -224,6 +190,8 @@ orchestrate itself, so it is not enumerated below.
 22. **seo-dataforseo** -- Live SEO data via DataForSEO MCP (extension mirror)
 23. **seo-image-gen** -- AI image generation for SEO assets via Gemini (extension mirror)
 24. **seo-flow** -- FLOW framework integration (Find -> Leverage -> Optimize -> Win, 41 AI prompts, CC BY 4.0)
+25. **seo-google-performance** -- Read-only GA4, GSC, and Google Ads organization connector data
+26. **summon-seo-service** -- Summon delivery workflow for travel SEO, GEO, PPC-to-SEO, implementation, and QA
 
 ### Optional Extensions
 
@@ -260,6 +228,7 @@ For parallel analysis during audits:
 - `seo-flow` -- FLOW framework prompts (conditional: spawned for content strategy workflows)
 - `seo-dataforseo` -- Live SERP, keyword, backlink, local SEO data (extension, optional)
 - `seo-image-gen` -- SEO image audit and generation plan (extension, optional)
+- `seo-google-performance` -- First-party GA4, GSC, and Ads performance analysis (Summon connector)
 
 ## Error Handling
 

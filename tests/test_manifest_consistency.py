@@ -206,7 +206,9 @@ def test_orchestrator_sub_skills_list_matches_disk():
     """
     text = (REPO_ROOT / "skills" / "seo" / "SKILL.md").read_text()
     section = _extract_section(text, "Sub-Skills")
-    listed_list = re.findall(r"^\d+\.\s+\*\*(seo-[a-z-]+)\*\*", section, re.MULTILINE)
+    listed_list = re.findall(
+        r"^\d+\.\s+\*\*((?:seo|summon)-[a-z-]+)\*\*", section, re.MULTILINE
+    )
     assert len(listed_list) == len(set(listed_list)), (
         f"Duplicate entries in Sub-Skills list: "
         f"{[n for n in listed_list if listed_list.count(n) > 1]}"

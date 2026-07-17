@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-07-17
+
+### Added
+
+- Summon agency delivery workflow for intake, baseline audits, travel SEO,
+  PPC-to-SEO, AI visibility, implementation briefs, QA, and monthly reporting.
+- Read-only Google Performance skill, agent, and MCP service for GA4, Search
+  Console, Google Ads reporting, and first-party opportunity analysis.
+- Travel SEO and client-delivery standards references plus reusable client artifacts.
+- Private DataForSEO and Google Performance organization connector runbooks.
+- Node connector smoke tests and CI coverage.
+
+### Changed
+
+- Rebranded the private marketplace and plugin as Summon SEO.
+- Removed third-party promotional footers from client deliverables.
+- Kept the upstream v2.2 security, rendering, Google API, and quality-test core.
+
 ## [2.2.0] - 2026-06-12
 
 Security, cross-platform, and data-accuracy release. Folds the v2.1.0 currency content into the first public ship and closes the full open-issue and PR backlog. No breaking changes.

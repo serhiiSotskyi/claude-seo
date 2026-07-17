@@ -1,0 +1,24 @@
+{
+  "name": "dataforseo-mcp-railway",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Railway-hosted authenticated proxy for the DataForSEO MCP HTTP server.",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "dataforseo-mcp-server": "^2.9.11",
+    "express": "^4.22.2",
+    "http-proxy-middleware": "^3.0.5"
+  },
+  "overrides": {
+    "esbuild": "0.28.1",
+    "undici": "8.5.0",
+    "ws": "8.21.0"
+  }
+}
