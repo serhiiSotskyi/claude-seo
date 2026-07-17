@@ -55,6 +55,26 @@ jobs:
       - name: Run pytest
         run: pytest tests/ -v
 
+  connector-test:
+    name: Google Performance MCP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: services/summon-google-performance-mcp/package-lock.json
+
+      - name: Install connector dependencies
+        working-directory: services/summon-google-performance-mcp
+        run: npm ci
+
+      - name: Validate and test connector
+        working-directory: services/summon-google-performance-mcp
+        run: npm run check && npm test
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest

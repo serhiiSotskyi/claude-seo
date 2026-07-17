@@ -1,0 +1,21 @@
+{
+  "name": "summon-google-performance-mcp",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only MCP service for Summon SEO workflows using GA4, Google Search Console, and Google Ads reporting data.",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check test/server.test.mjs",
+    "test": "node --test test/server.test.mjs"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "express": "^4.22.2"
+  },
+  "overrides": {
+    "undici": "8.5.0"
+  }
+}

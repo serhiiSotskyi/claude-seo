@@ -1,24 +1,23 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "agricidaniel-claude-seo",
+  "name": "summon-seo",
   "owner": {
-    "name": "AgriciDaniel"
+    "name": "Summon"
   },
   "metadata": {
-    "description": "Comprehensive SEO analysis plugin for Claude Code. 25 sub-skills and 18 sub-agents, plus 8 optional MCP extensions (DataForSEO, Firecrawl, Banana, Ahrefs, SE Ranking, Profound, Bing Webmaster, Unlighthouse). v2 adds shared headless rendering, QRG-aligned content quality gates, LCP subparts via CrUX, IndexNow, four Schema.org generators, AI Share-of-Voice tracking, parasite-SEO risk scanning, multi-platform portability, and a hardened SSRF + DNS-rebinding safety layer."
+    "description": "Summon's private SEO and AI visibility marketplace with 27 sub-skills and 19 sub-agents, travel-specific delivery workflows, DataForSEO, and read-only first-party Google performance analysis."
   },
   "plugins": [
     {
-      "name": "claude-seo",
+      "name": "summon-seo",
       "source": "./",
-      "description": "Comprehensive SEO analysis plugin for Claude Code. 25 sub-skills (21 core + 1 orchestrator + 1 framework integration + 2 extension mirrors) and 18 sub-agents (15 core + 1 framework integration + 2 extension mirrors), plus 8 optional MCP extensions. v2 adds shared headless rendering across every fetching agent, QRG-aligned content quality gates, LCP subparts via CrUX, IndexNow submission, four Schema.org generators (Reservation / OrderAction / DiscussionForumPosting / ProfilePage), AI Share-of-Voice tracking, parasite-SEO risk scanning, and multi-platform portability.",
+      "description": "Summon's SEO and AI visibility delivery plugin. 27 sub-skills (21 core + 1 orchestrator + 1 framework integration + 4 extension skills) and 19 sub-agents cover technical SEO, travel content, PPC-to-SEO, first-party performance data, DataForSEO, and GEO with evidence, implementation, QA, and reporting workflows.",
       "author": {
-        "name": "AgriciDaniel",
-        "email": "agricidaniel@gmail.com",
-        "url": "https://github.com/AgriciDaniel"
+        "name": "Summon",
+        "email": "serge@summon.co",
+        "url": "https://summon.co"
       },
       "category": "marketing",
-      "homepage": "https://claude-seo.md",
+      "homepage": "https://summon.co",
       "keywords": [
         "seo",
         "technical-seo",
@@ -56,7 +55,11 @@
         "headless-rendering",
         "ssrf-safe-fetchers",
         "ai-citation-optimization",
-        "synthesis-framework"
+        "synthesis-framework",
+        "travel-seo",
+        "ppc-to-seo",
+        "google-ads",
+        "agency-workflow"
       ]
     }
   ]

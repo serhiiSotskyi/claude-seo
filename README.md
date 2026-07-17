@@ -1,8 +1,16 @@
 ![Claude SEO cover: a Claude Code command palette with /seo audit, schema, geo, content, and backlinks commands over a dark CRT panel](assets/cover.svg)
 
-# Claude SEO: SEO Skill for Claude Code
+# Summon SEO: Agency SEO and AI Visibility Delivery
 
-**Claude SEO is an open-source SEO analysis plugin for [Claude Code](https://claude.ai/claude-code).** It runs 25 sub-skills and 18 specialist agents in parallel across technical SEO, content quality (E-E-A-T), Schema.org markup, AI search optimization (GEO), local SEO, e-commerce, and international SEO. Every audit produces a prioritized action plan with falsifiable recommendations grounded in primary-source guidance from Google.
+**Summon SEO is Summon's private agency distribution of the MIT-licensed Claude
+SEO core.** It runs 27 sub-skills and 19 specialist agents across technical SEO,
+content quality, Schema.org, AI visibility, travel SEO, PPC-to-SEO, DataForSEO,
+and read-only first-party Google performance analysis. Client delivery adds
+evidence, implementation, QA, and reporting gates.
+
+> Internal distribution: install from the private `serhiiSotskyi/claude-seo`
+> organization marketplace. The upstream project and contributors remain
+> credited in `CONTRIBUTORS.md`, `CITATION.cff`, and the repository history.
 
 [![CI](https://github.com/AgriciDaniel/claude-seo/actions/workflows/ci.yml/badge.svg)](https://github.com/AgriciDaniel/claude-seo/actions/workflows/ci.yml)
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-blue)](https://claude.ai/claude-code)
@@ -69,6 +77,14 @@ Run a full audit and watch parallel agents fan out across the site:
 - [Author](#author)
 
 ## Installation
+
+For Summon Team, add the private GitHub repository in **Claude Organization
+settings > Plugins**, set the `Summon SEO` plugin to **Installed by default** or
+**Required**, and enable automatic marketplace sync. Configure DataForSEO and
+Summon Google Performance as organization connectors.
+
+The commands below document the upstream standalone installation path and are
+retained for core development compatibility.
 
 > ℹ️ **Which version are you installing?**
 >
@@ -285,7 +301,7 @@ Other audit outputs follow the same shape: `FULL-AUDIT-REPORT.md` (umbrella audi
 
 ## Architecture
 
-![Claude SEO audit signal flow: /seo audit enters the orchestrator, fans out to 25 sub-skills and 6 parallel audit agents, and converges through the scoring engine into a prioritized report](assets/signal-flow.svg)
+![Summon SEO audit signal flow: /seo audit enters the orchestrator, fans out to 27 sub-skills and parallel audit agents, and converges through the scoring engine into a prioritized report](assets/signal-flow.svg)
 
 The plugin follows the [Agent Skills standard](https://docs.claude.com/en/docs/claude-code/skills) with a 3-layer architecture (directive, orchestration, execution). Skills and agents are auto-discovered from `skills/seo-*/` and `agents/seo-*.md`. The orchestrator (`skills/seo/SKILL.md`) handles industry detection (SaaS, local, ecommerce, publisher, agency), parallel sub-agent dispatch up to 15 simultaneously, and synthesis through the [10-principle framework](#methodology) before emitting the action plan. Full architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -433,7 +449,11 @@ Claude SEO is part of a family of Claude Code skills that interoperate cleanly:
 
 ### What is Claude SEO?
 
-Claude SEO is an open-source SEO analysis plugin for Claude Code. It runs 25 sub-skills and 18 specialist agents in parallel across technical SEO, content quality, Schema.org markup, AI search optimization, local SEO, e-commerce, and international SEO. Audits produce a prioritized action plan where each recommendation carries the first-principle observation it rests on, its dependency relationship to other recommendations, a "how would we know this failed?" check, and a leading indicator. The plugin is MIT-licensed, ships zero proprietary tracking, and works fully offline if you skip the optional Google API and MCP-extension enrichments. Aligned with [Google's AI Optimization Guide](https://developers.google.com/search/docs/fundamentals/ai-optimization-guide) and the September 2025 Quality Rater Guidelines.
+Summon SEO is a private agency distribution of the open-source Claude SEO core.
+It runs 27 sub-skills and 19 specialist agents and adds travel SEO, PPC-to-SEO,
+first-party performance data, evidence controls, implementation briefs, and QA.
+The inherited core remains MIT-licensed and aligned with Google's primary-source
+guidance.
 
 ### How is Claude SEO different from Screaming Frog or Ahrefs Site Audit?
 
@@ -449,7 +469,9 @@ None are required. Claude SEO is fully functional with zero API keys. A 4-tier c
 
 ### Is Claude SEO free?
 
-Yes. MIT licensed, fully open source, no per-domain pricing, no telemetry, no API quotas imposed by the plugin itself. The core plugin and all 25 sub-skills work without any paid service. Some optional MCP extensions wrap paid services (DataForSEO, Ahrefs, Profound, SE Ranking) where you bring your own account credentials; their use is opt-in and the plugin works fully without them. Google APIs (PageSpeed Insights, Search Console, Indexing, GA4) are free from Google with normal account quota limits and require your own credentials. If you want commercial support or enterprise features beyond the open-source plugin, that is not part of this project.
+The inherited core is MIT licensed. Summon's private distribution uses DataForSEO
+and hosted connector infrastructure that may incur usage costs. Google APIs have
+normal account quotas and require authorized client access.
 
 ### How is Claude SEO different from regular SEO tools when it comes to AI search?
 

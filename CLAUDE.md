@@ -4,9 +4,9 @@
 
 This repository contains **Claude SEO**, a Tier 4 Claude Code skill for comprehensive
 SEO analysis across all industries. It follows the Agent Skills open standard and the
-3-layer architecture (directive, orchestration, execution). 25 sub-skills (21 core +
-1 orchestrator + 1 framework integration + 2 extension mirrors), 18 sub-agents (15 core +
-1 framework integration + 2 extension mirrors), and an extensible reference
+3-layer architecture (directive, orchestration, execution). 27 sub-skills (21 core +
+1 orchestrator + 1 framework integration + 4 extension skills), 19 sub-agents (15 core +
+1 framework integration + 3 extension agents), and an extensible reference
 system cover technical SEO, content quality,
 schema markup, image optimization, sitemap architecture, AI search optimization,
 local SEO (GBP, citations, reviews, map pack), maps intelligence, semantic topic
@@ -21,9 +21,9 @@ claude-seo/
   CONTRIBUTORS.md                    # Community credits (Pro Hub Challenge)
   AGENTS.md                          # Multi-platform agent instructions (Cursor, Antigravity)
   .claude-plugin/
-    plugin.json                    # Plugin manifest (v2.2.0)
+    plugin.json                    # Plugin manifest (v2.3.0)
     marketplace.json               # Marketplace catalog for distribution
-  skills/                            # 25 sub-skills (auto-discovered)
+  skills/                            # 27 sub-skills (auto-discovered)
     seo/                           # Main orchestrator skill
       SKILL.md                     # Entry point, routing table, core rules
       references/                  # On-demand knowledge files (12 files)
@@ -59,10 +59,16 @@ claude-seo/
       SKILL.md
       references/                # Marketplace API endpoints
     seo-dataforseo/SKILL.md     # Live SEO data via DataForSEO MCP (extension mirror)
+    seo-google-performance/     # Read-only Summon GA4/GSC/Ads connector
+      SKILL.md
+    summon-seo-service/         # Summon client delivery workflow
+      SKILL.md
+      assets/templates/         # Intake, audit, backlog, briefs, QA, reporting
+      references/               # Travel and delivery standards
     seo-image-gen/              # AI image generation for SEO assets (extension mirror)
       SKILL.md
       references/                # Image gen reference files (7 files)
-  agents/                          # 18 subagents (auto-discovered)
+  agents/                          # 19 subagents (auto-discovered)
     seo-technical.md             # Crawlability, indexability, security
     seo-content.md               # E-E-A-T, readability, thin content
     seo-schema.md                # Structured data validation
@@ -80,6 +86,7 @@ claude-seo/
     seo-sxo.md                   # Search experience optimization
     seo-drift.md                 # SEO drift monitoring
     seo-ecommerce.md             # E-commerce SEO analysis
+    seo-google-performance.md    # First-party performance analysis
   hooks/                           # Quality gate hooks
     hooks.json                   # PostToolUse schema validation
   scripts/                         # Python execution scripts (50 tracked + dev-only helpers)
@@ -162,6 +169,8 @@ claude-seo/
 | `/seo maps [command] [args]` | Maps intelligence (geo-grid, GBP audit, reviews, competitors) |
 | `/seo hreflang <url>` | International SEO / hreflang audit |
 | `/seo google [command] [url]` | Google SEO APIs (GSC, PageSpeed, CrUX, Indexing, GA4) |
+| `/seo-google-performance [report] [client-key]` | Read-only GA4, GSC, and Google Ads reporting |
+| `/summon-seo-service [workflow] [client\|domain]` | Summon intake, baseline, PPC-to-SEO, QA, and reporting |
 | `/seo backlinks <url>` | Backlink profile analysis (free: Moz, Bing, CC; premium: DataForSEO) |
 | `/seo backlinks setup` | Setup instructions for free backlink APIs |
 | `/seo backlinks verify <url>` | Verify known backlinks still exist |
