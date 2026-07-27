@@ -1,9 +1,9 @@
 {
-  "name": "summon-google-performance-mcp",
+  "name": "summon-microsoft-ads-mcp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Read-only MCP service for Summon SEO workflows using GA4, Google Search Console, and Google Ads reporting data.",
+  "description": "Read-only MCP service for Summon SEO workflows using Microsoft Advertising reporting data.",
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs && node ../../scripts/security/check-ads-connectors-readonly.mjs"
@@ -12,6 +12,7 @@
     "node": ">=20.9.0"
   },
   "dependencies": {
+    "adm-zip": "^0.6.0",
     "express": "^4.22.2"
   },
   "overrides": {

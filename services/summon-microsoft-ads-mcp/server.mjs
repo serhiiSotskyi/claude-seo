@@ -1,3 +1,4 @@
+import AdmZip from "adm-zip";
 import express from "express";
 import {
   createHash,
@@ -7,11 +8,30 @@ import {
 } from "node:crypto";
 
 const PUBLIC_PORT = Number.parseInt(process.env.PORT || "3000", 10);
-const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION || "v24";
-const GOOGLE_ADS_BASE_URL = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const GA4_BASE_URL = "https://analyticsdata.googleapis.com/v1beta";
-const GSC_BASE_URL = "https://searchconsole.googleapis.com/webmasters/v3";
+const MICROSOFT_ADS_ENVIRONMENT =
+  process.env.MICROSOFT_ADS_ENVIRONMENT || "production";
+const MICROSOFT_ADS_TENANT = process.env.MICROSOFT_ADS_TENANT || "common";
+const MICROSOFT_TOKEN_URL = `https://login.microsoftonline.com/${encodeURIComponent(
+  MICROSOFT_ADS_TENANT,
+)}/oauth2/v2.0/token`;
+const MICROSOFT_ADS_SCOPE =
+  process.env.MICROSOFT_ADS_SCOPE ||
+  "https://ads.microsoft.com/msads.manage offline_access";
+const MICROSOFT_REPORTING_BASE_URL =
+  MICROSOFT_ADS_ENVIRONMENT === "sandbox"
+    ? "https://reporting.api.sandbox.bingads.microsoft.com/Reporting/v13"
+    : "https://reporting.api.bingads.microsoft.com/Reporting/v13";
+const MICROSOFT_REPORT_TIME_ZONE =
+  process.env.MICROSOFT_ADS_REPORT_TIME_ZONE ||
+  "GreenwichMeanTimeDublinEdinburghLisbonLondon";
+const REPORT_POLL_INTERVAL_MS = Number.parseInt(
+  process.env.REPORT_POLL_INTERVAL_MS || "3000",
+  10,
+);
+const REPORT_POLL_MAX_ATTEMPTS = Number.parseInt(
+  process.env.REPORT_POLL_MAX_ATTEMPTS || "30",
+  10,
+);
 
 const staticBearerEnabled = Boolean(process.env.MCP_AUTH_TOKEN);
 const oauthEnabled = Boolean(
@@ -43,7 +63,7 @@ const oauthRefreshTtlSeconds = Number.parseInt(
   10,
 );
 const oauthPrimaryScope =
-  process.env.OAUTH_SCOPE || "summon-google-performance:read";
+  process.env.OAUTH_SCOPE || "summon-microsoft-ads:read";
 const oauthSupportedScopes = new Set([oauthPrimaryScope, "offline_access"]);
 const oauthAllowedRedirectUris = (
   process.env.OAUTH_REDIRECT_URIS || "https://claude.ai/api/mcp/auth_callback"
@@ -55,7 +75,7 @@ const oauthAutoApprove = process.env.OAUTH_AUTO_APPROVE === "true";
 const authorizationCodes = new Map();
 
 const clients = parseClientAllowlist(process.env.CLIENT_ALLOWLIST_JSON || "{}");
-let googleTokenCache = null;
+let microsoftTokenCache = null;
 
 const safetyState = createSafetyState();
 const READONLY_SAFETY = {
@@ -70,9 +90,21 @@ const READONLY_SAFETY = {
     10,
   ),
   rateWindowMs: parsePositiveInt(process.env.SAFETY_RATE_WINDOW_MS, 60_000),
+  reportSubmitLimit: parsePositiveInt(
+    process.env.SAFETY_REPORT_SUBMIT_LIMIT,
+    10,
+  ),
+  reportSubmitWindowMs: parsePositiveInt(
+    process.env.SAFETY_REPORT_SUBMIT_WINDOW_MS,
+    3_600_000,
+  ),
   cacheTtlMs: parsePositiveInt(process.env.SAFETY_CACHE_TTL_MS, 21_600_000),
   todayCacheTtlMs: parsePositiveInt(
     process.env.SAFETY_TODAY_CACHE_TTL_MS,
+    900_000,
+  ),
+  reportDownloadTtlMs: parsePositiveInt(
+    process.env.SAFETY_REPORT_DOWNLOAD_TTL_MS,
     900_000,
   ),
   circuitCooldownMs: parsePositiveInt(
@@ -88,16 +120,12 @@ const READONLY_SAFETY = {
 
 // readonly-safety-allow-risk-terms:start
 const READONLY_DENYLIST = [
-  ":mutate",
-  "googleAds:mutate",
+  "CampaignManagement",
+  "CustomerManagement",
+  "BulkService",
   "billing",
   "payment",
-  "customerUserAccess",
-  "customerManagerLink",
-  "accountBudget",
-  "campaignBudget",
-  "campaignCriterion",
-  "operations",
+  "accountLink",
 ];
 // readonly-safety-allow-risk-terms:end
 
@@ -118,8 +146,8 @@ app.options("*", (_req, res) => {
 app.get("/health", (_req, res) => {
   res.status(200).json({
     ok: true,
-    service: "summon-google-performance-mcp",
-    googleAdsApiVersion: GOOGLE_ADS_API_VERSION,
+    service: "summon-microsoft-ads-mcp",
+    environment: MICROSOFT_ADS_ENVIRONMENT,
     clients: Object.keys(clients).length,
     auth: {
       staticBearer: staticBearerEnabled,
@@ -140,7 +168,7 @@ app.get(
       scopes_supported: [...oauthSupportedScopes],
       bearer_methods_supported: ["header"],
       resource_documentation:
-        "https://github.com/serhiiSotskyi/claude-seo/blob/main/extensions/google-performance/docs/GOOGLE-PERFORMANCE-SETUP.md",
+        "https://github.com/serhiiSotskyi/claude-seo/blob/main/extensions/microsoft-ads/docs/MICROSOFT-ADS-SETUP.md",
     });
   },
 );
@@ -258,7 +286,7 @@ app.use((_req, res) => {
 });
 
 const publicServer = app.listen(PUBLIC_PORT, () => {
-  console.log(`Summon Google Performance MCP listening on port ${PUBLIC_PORT}`);
+  console.log(`Summon Microsoft Ads MCP listening on port ${PUBLIC_PORT}`);
   console.log(
     `Authentication enabled: staticBearer=${staticBearerEnabled} oauth=${oauthEnabled}`,
   );
@@ -268,7 +296,7 @@ const tools = [
   {
     name: "list_clients",
     description:
-      "List configured client keys and allowed first-party data sources.",
+      "List configured client keys and allowlisted Microsoft Advertising accounts.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -276,125 +304,72 @@ const tools = [
     },
   },
   {
-    name: "ga4_channel_performance",
+    name: "microsoft_ads_campaign_performance",
     description:
-      "Read GA4 sessions, engaged sessions, conversions, and revenue by channel.",
+      "Read Microsoft Advertising campaign performance using a fixed reporting template.",
     inputSchema: clientDateSchema({
-      property_id: { type: "string", description: "Allowed GA4 property ID." },
-      limit: numberSchema(1, 1000, 100),
-    }),
-  },
-  {
-    name: "ga4_landing_pages",
-    description:
-      "Read GA4 organic landing page performance for SEO opportunity analysis.",
-    inputSchema: clientDateSchema({
-      property_id: { type: "string", description: "Allowed GA4 property ID." },
-      limit: numberSchema(1, 1000, 100),
-    }),
-  },
-  {
-    name: "ga4_conversions_by_landing_page",
-    description:
-      "Read GA4 conversions and revenue by organic landing page.",
-    inputSchema: clientDateSchema({
-      property_id: { type: "string", description: "Allowed GA4 property ID." },
-      limit: numberSchema(1, 1000, 100),
-    }),
-  },
-  {
-    name: "gsc_search_analytics",
-    description:
-      "Read Google Search Console query or page performance for an allowed site.",
-    inputSchema: clientDateSchema({
-      site_url: { type: "string", description: "Allowed GSC site URL." },
-      dimensions: {
-        type: "array",
-        items: {
-          type: "string",
-          enum: ["query", "page", "country", "device", "date"],
-        },
-        default: ["query", "page"],
-      },
-      limit: numberSchema(1, 25000, 1000),
-    }),
-  },
-  {
-    name: "gsc_queries_by_page",
-    description:
-      "Read Google Search Console queries for one allowed page URL.",
-    inputSchema: clientDateSchema(
-      {
-        site_url: { type: "string", description: "Allowed GSC site URL." },
-        page: { type: "string", description: "Page URL to filter." },
-        limit: numberSchema(1, 25000, 1000),
-      },
-      ["page"],
-    ),
-  },
-  {
-    name: "gsc_brand_vs_nonbrand",
-    description:
-      "Split Google Search Console query performance into brand and non-brand groups.",
-    inputSchema: clientDateSchema({
-      site_url: { type: "string", description: "Allowed GSC site URL." },
-      brand_terms: {
-        type: "array",
-        items: { type: "string" },
-        description:
-          "Optional brand terms. Defaults to the client allowlist brandTerms.",
-      },
-      limit: numberSchema(1, 25000, 25000),
-    }),
-  },
-  {
-    name: "google_ads_campaign_performance",
-    description:
-      "Read Google Ads campaign performance using a templated reporting query.",
-    inputSchema: clientDateSchema({
-      customer_id: {
+      account_id: {
         type: "string",
-        description: "Allowed Google Ads customer ID.",
+        description: "Allowed Microsoft Advertising account ID.",
       },
+      aggregation: aggregationSchema(),
       limit: numberSchema(1, 10000, 1000),
     }),
   },
   {
-    name: "google_ads_search_terms",
+    name: "microsoft_ads_search_queries",
     description:
-      "Read Google Ads search term performance using a templated reporting query.",
+      "Read Microsoft Advertising search query performance for PPC-to-SEO analysis.",
     inputSchema: clientDateSchema({
-      customer_id: {
+      account_id: {
         type: "string",
-        description: "Allowed Google Ads customer ID.",
+        description: "Allowed Microsoft Advertising account ID.",
       },
       min_clicks: numberSchema(0, 100000, 1),
+      aggregation: aggregationSchema(),
       limit: numberSchema(1, 10000, 1000),
     }),
   },
   {
-    name: "google_ads_landing_pages",
+    name: "microsoft_ads_keyword_performance",
     description:
-      "Read Google Ads landing page performance using a templated reporting query.",
+      "Read Microsoft Advertising keyword performance using a fixed reporting template.",
     inputSchema: clientDateSchema({
-      customer_id: {
+      account_id: {
         type: "string",
-        description: "Allowed Google Ads customer ID.",
+        description: "Allowed Microsoft Advertising account ID.",
       },
+      min_clicks: numberSchema(0, 100000, 1),
+      aggregation: aggregationSchema(),
       limit: numberSchema(1, 10000, 1000),
     }),
   },
   {
-    name: "ppc_to_seo_opportunities",
+    name: "microsoft_ads_landing_pages",
     description:
-      "Find paid search terms that may deserve SEO pages or optimisation.",
+      "Read Microsoft Advertising search term and landing page performance.",
     inputSchema: clientDateSchema({
-      customer_id: {
+      account_id: {
         type: "string",
-        description: "Allowed Google Ads customer ID.",
+        description: "Allowed Microsoft Advertising account ID.",
+      },
+      min_clicks: numberSchema(0, 100000, 1),
+      aggregation: aggregationSchema(),
+      limit: numberSchema(1, 10000, 1000),
+    }),
+  },
+  {
+    name: "microsoft_ads_ppc_to_seo_opportunities",
+    description:
+      "Group Microsoft Ads search-term/landing-page data into SEO opportunity candidates.",
+    inputSchema: clientDateSchema({
+      account_id: {
+        type: "string",
+        description: "Allowed Microsoft Advertising account ID.",
       },
       min_clicks: numberSchema(0, 100000, 5),
       min_conversions: numberSchema(0, 100000, 1),
+      aggregation: aggregationSchema(),
       limit: numberSchema(1, 5000, 500),
     }),
   },
@@ -412,7 +387,7 @@ async function handleRpcRequest(request, req) {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: {
-          name: "summon-google-performance-mcp",
+          name: "summon-microsoft-ads-mcp",
           version: "0.1.0",
         },
       });
@@ -455,26 +430,16 @@ async function callTool(name, args, req) {
   switch (name) {
     case "list_clients":
       return listClients();
-    case "ga4_channel_performance":
-      return ga4ChannelPerformance(args, req);
-    case "ga4_landing_pages":
-      return ga4LandingPages(args, req);
-    case "ga4_conversions_by_landing_page":
-      return ga4ConversionsByLandingPage(args, req);
-    case "gsc_search_analytics":
-      return gscSearchAnalytics(args, req);
-    case "gsc_queries_by_page":
-      return gscQueriesByPage(args, req);
-    case "gsc_brand_vs_nonbrand":
-      return gscBrandVsNonbrand(args, req);
-    case "google_ads_campaign_performance":
-      return googleAdsCampaignPerformance(args, req);
-    case "google_ads_search_terms":
-      return googleAdsSearchTerms(args, req);
-    case "google_ads_landing_pages":
-      return googleAdsLandingPages(args, req);
-    case "ppc_to_seo_opportunities":
-      return ppcToSeoOpportunities(args, req);
+    case "microsoft_ads_campaign_performance":
+      return microsoftAdsCampaignPerformance(args, req);
+    case "microsoft_ads_search_queries":
+      return microsoftAdsSearchQueries(args, req);
+    case "microsoft_ads_keyword_performance":
+      return microsoftAdsKeywordPerformance(args, req);
+    case "microsoft_ads_landing_pages":
+      return microsoftAdsLandingPages(args, req);
+    case "microsoft_ads_ppc_to_seo_opportunities":
+      return microsoftAdsPpcToSeoOpportunities(args, req);
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -485,558 +450,442 @@ function listClients() {
     clients: Object.entries(clients).map(([key, client]) => ({
       key,
       label: client.label || key,
-      ga4Properties: maskArray(client.ga4Properties),
-      gscSites: client.gscSites || [],
-      googleAdsCustomerIds: maskArray(client.googleAdsCustomerIds),
+      microsoftAdsAccounts: client.microsoftAdsAccounts.map((account) => ({
+        label: account.label,
+        accountId: maskId(account.accountId),
+        customerId: maskId(account.customerId),
+      })),
       brandTerms: client.brandTerms || [],
     })),
   };
 }
 
-async function ga4ChannelPerformance(args, req) {
-  const context = getGa4Context(args);
-  const dateRange = normaliseDateRange(args, 366);
-  const limit = clampNumber(args.limit, 1, 1000, 100);
-  const report = await runGa4Report(context.propertyId, {
-    dateRanges: [dateRange],
-    dimensions: [{ name: "sessionDefaultChannelGroup" }],
-    metrics: [
-      { name: "sessions" },
-      { name: "engagedSessions" },
-      { name: "conversions" },
-      { name: "totalRevenue" },
-    ],
-    limit,
-    orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-  });
-
-  audit(req, "ga4_channel_performance", args, {
-    rows: report.rows?.length || 0,
-    propertyId: context.propertyId,
-  });
-
-  return {
-    source: "GA4 Data API",
-    client: context.clientKey,
-    propertyId: context.propertyId,
-    dateRange,
-    rows: report.rows || [],
-    metadata: report.metadata || null,
-  };
-}
-
-async function ga4LandingPages(args, req) {
-  const context = getGa4Context(args);
-  const dateRange = normaliseDateRange(args, 366);
-  const limit = clampNumber(args.limit, 1, 1000, 100);
-  const report = await runGa4Report(context.propertyId, {
-    dateRanges: [dateRange],
-    dimensions: [{ name: "landingPagePlusQueryString" }],
-    metrics: [
-      { name: "sessions" },
-      { name: "engagedSessions" },
-      { name: "conversions" },
-      { name: "totalRevenue" },
-    ],
-    dimensionFilter: exactStringFilter(
-      "sessionDefaultChannelGroup",
-      "Organic Search",
-    ),
-    limit,
-    orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-  });
-
-  audit(req, "ga4_landing_pages", args, {
-    rows: report.rows?.length || 0,
-    propertyId: context.propertyId,
-  });
-
-  return {
-    source: "GA4 Data API",
-    client: context.clientKey,
-    propertyId: context.propertyId,
-    channel: "Organic Search",
-    dateRange,
-    rows: report.rows || [],
-  };
-}
-
-async function ga4ConversionsByLandingPage(args, req) {
-  const context = getGa4Context(args);
-  const dateRange = normaliseDateRange(args, 366);
-  const limit = clampNumber(args.limit, 1, 1000, 100);
-  const report = await runGa4Report(context.propertyId, {
-    dateRanges: [dateRange],
-    dimensions: [{ name: "landingPagePlusQueryString" }],
-    metrics: [
-      { name: "conversions" },
-      { name: "sessions" },
-      { name: "totalRevenue" },
-    ],
-    dimensionFilter: exactStringFilter(
-      "sessionDefaultChannelGroup",
-      "Organic Search",
-    ),
-    limit,
-    orderBys: [{ metric: { metricName: "conversions" }, desc: true }],
-  });
-
-  audit(req, "ga4_conversions_by_landing_page", args, {
-    rows: report.rows?.length || 0,
-    propertyId: context.propertyId,
-  });
-
-  return {
-    source: "GA4 Data API",
-    client: context.clientKey,
-    propertyId: context.propertyId,
-    channel: "Organic Search",
-    dateRange,
-    rows: report.rows || [],
-  };
-}
-
-async function gscSearchAnalytics(args, req) {
-  const context = getGscContext(args);
-  const dateRange = normaliseDateRange(args, 486);
-  const dimensions = Array.isArray(args.dimensions) && args.dimensions.length
-    ? args.dimensions
-    : ["query", "page"];
-  const limit = clampNumber(args.limit, 1, 25000, 1000);
-  const report = await querySearchConsole(context.siteUrl, {
-    startDate: dateRange.startDate,
-    endDate: dateRange.endDate,
-    dimensions,
-    rowLimit: limit,
-  });
-
-  audit(req, "gsc_search_analytics", args, {
-    rows: report.rows?.length || 0,
-    siteUrl: context.siteUrl,
-  });
-
-  return {
-    source: "Google Search Console API",
-    client: context.clientKey,
-    siteUrl: context.siteUrl,
-    dateRange,
-    dimensions,
-    rows: report.rows || [],
-  };
-}
-
-async function gscQueriesByPage(args, req) {
-  const context = getGscContext(args);
-  const page = requireString(args.page, "page");
-  const dateRange = normaliseDateRange(args, 486);
-  const limit = clampNumber(args.limit, 1, 25000, 1000);
-  const report = await querySearchConsole(context.siteUrl, {
-    startDate: dateRange.startDate,
-    endDate: dateRange.endDate,
-    dimensions: ["query"],
-    rowLimit: limit,
-    dimensionFilterGroups: [
-      {
-        filters: [
-          {
-            dimension: "page",
-            operator: "equals",
-            expression: page,
-          },
-        ],
-      },
+async function microsoftAdsCampaignPerformance(args, req) {
+  const context = getMicrosoftAdsContext(args);
+  const report = await runTemplateReport({
+    context,
+    args,
+    reportType: "CampaignPerformanceReportRequest",
+    reportName: "summon-campaign-performance",
+    columns: [
+      "TimePeriod",
+      "AccountName",
+      "AccountId",
+      "CampaignName",
+      "CampaignId",
+      "CampaignStatus",
+      "CampaignType",
+      "CurrencyCode",
+      "Impressions",
+      "Clicks",
+      "Ctr",
+      "AverageCpc",
+      "Spend",
+      "Conversions",
+      "ConversionRate",
+      "CostPerConversion",
+      "Revenue",
+      "ReturnOnAdSpend",
     ],
   });
 
-  audit(req, "gsc_queries_by_page", args, {
-    rows: report.rows?.length || 0,
-    siteUrl: context.siteUrl,
+  audit(req, "microsoft_ads_campaign_performance", args, {
+    rows: report.rows.length,
+    accountId: context.account.accountId,
   });
 
-  return {
-    source: "Google Search Console API",
-    client: context.clientKey,
-    siteUrl: context.siteUrl,
-    page,
-    dateRange,
-    rows: report.rows || [],
-  };
+  return report;
 }
 
-async function gscBrandVsNonbrand(args, req) {
-  const context = getGscContext(args);
-  const dateRange = normaliseDateRange(args, 486);
-  const limit = clampNumber(args.limit, 1, 25000, 25000);
-  const brandTerms =
-    Array.isArray(args.brand_terms) && args.brand_terms.length
-      ? args.brand_terms
-      : context.client.brandTerms || [];
-
-  if (!brandTerms.length) {
-    throw new Error(
-      "No brand terms configured. Add brandTerms to CLIENT_ALLOWLIST_JSON or pass brand_terms.",
-    );
-  }
-
-  const report = await querySearchConsole(context.siteUrl, {
-    startDate: dateRange.startDate,
-    endDate: dateRange.endDate,
-    dimensions: ["query"],
-    rowLimit: limit,
-  });
-  const summary = splitBrandQueries(report.rows || [], brandTerms);
-
-  audit(req, "gsc_brand_vs_nonbrand", args, {
-    rows: report.rows?.length || 0,
-    siteUrl: context.siteUrl,
-  });
-
-  return {
-    source: "Google Search Console API",
-    client: context.clientKey,
-    siteUrl: context.siteUrl,
-    dateRange,
-    brandTerms,
-    summary,
-  };
-}
-
-async function googleAdsCampaignPerformance(args, req) {
-  const context = getGoogleAdsContext(args);
-  const dateRange = normaliseDateRange(args, 366);
-  const limit = clampNumber(args.limit, 1, 10000, 1000);
-  const query = `
-    SELECT
-      segments.date,
-      campaign.id,
-      campaign.name,
-      campaign.advertising_channel_type,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.conversions,
-      metrics.conversions_value
-    FROM campaign
-    WHERE segments.date BETWEEN '${dateRange.startDate}' AND '${dateRange.endDate}'
-    ORDER BY metrics.clicks DESC
-    LIMIT ${limit}
-  `;
-  const rows = await searchGoogleAds(context.customerId, query);
-
-  audit(req, "google_ads_campaign_performance", args, {
-    rows: rows.length,
-    customerId: context.customerId,
-  });
-
-  return {
-    source: "Google Ads API",
-    client: context.clientKey,
-    customerId: context.customerId,
-    dateRange,
-    rows,
-  };
-}
-
-async function googleAdsSearchTerms(args, req) {
-  const context = getGoogleAdsContext(args);
-  const dateRange = normaliseDateRange(args, 366);
+async function microsoftAdsSearchQueries(args, req) {
+  const context = getMicrosoftAdsContext(args);
   const minClicks = clampNumber(args.min_clicks, 0, 100000, 1);
-  const limit = clampNumber(args.limit, 1, 10000, 1000);
-  const rows = await fetchGoogleAdsSearchTerms(context.customerId, dateRange, {
-    minClicks,
-    limit,
+  const report = await runTemplateReport({
+    context,
+    args,
+    reportType: "SearchQueryPerformanceReportRequest",
+    reportName: "summon-search-query-performance",
+    columns: [
+      "TimePeriod",
+      "AccountName",
+      "AccountId",
+      "CampaignName",
+      "CampaignId",
+      "AdGroupName",
+      "AdGroupId",
+      "SearchQuery",
+      "Keyword",
+      "BidMatchType",
+      "DeliveredMatchType",
+      "DeviceType",
+      "Network",
+      "Impressions",
+      "Clicks",
+      "Ctr",
+      "AverageCpc",
+      "Spend",
+      "Conversions",
+      "ConversionRate",
+      "CostPerConversion",
+      "Revenue",
+      "ReturnOnAdSpend",
+    ],
   });
 
-  audit(req, "google_ads_search_terms", args, {
-    rows: rows.length,
-    customerId: context.customerId,
+  report.rows = filterRows(report.rows, { minClicks });
+
+  audit(req, "microsoft_ads_search_queries", args, {
+    rows: report.rows.length,
+    accountId: context.account.accountId,
   });
 
-  return {
-    source: "Google Ads API",
-    client: context.clientKey,
-    customerId: context.customerId,
-    dateRange,
-    minClicks,
-    rows,
-  };
+  return { ...report, minClicks };
 }
 
-async function googleAdsLandingPages(args, req) {
-  const context = getGoogleAdsContext(args);
-  const dateRange = normaliseDateRange(args, 366);
-  const limit = clampNumber(args.limit, 1, 10000, 1000);
-  const query = `
-    SELECT
-      landing_page_view.unexpanded_final_url,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.conversions,
-      metrics.conversions_value
-    FROM landing_page_view
-    WHERE segments.date BETWEEN '${dateRange.startDate}' AND '${dateRange.endDate}'
-    ORDER BY metrics.clicks DESC
-    LIMIT ${limit}
-  `;
-  const rows = await searchGoogleAds(context.customerId, query);
-
-  audit(req, "google_ads_landing_pages", args, {
-    rows: rows.length,
-    customerId: context.customerId,
+async function microsoftAdsKeywordPerformance(args, req) {
+  const context = getMicrosoftAdsContext(args);
+  const minClicks = clampNumber(args.min_clicks, 0, 100000, 1);
+  const report = await runTemplateReport({
+    context,
+    args,
+    reportType: "KeywordPerformanceReportRequest",
+    reportName: "summon-keyword-performance",
+    columns: [
+      "TimePeriod",
+      "AccountName",
+      "AccountId",
+      "CampaignName",
+      "CampaignId",
+      "AdGroupName",
+      "AdGroupId",
+      "Keyword",
+      "BidMatchType",
+      "DeliveredMatchType",
+      "QualityScore",
+      "Impressions",
+      "Clicks",
+      "Ctr",
+      "AverageCpc",
+      "Spend",
+      "Conversions",
+      "ConversionRate",
+      "CostPerConversion",
+      "Revenue",
+      "ReturnOnAdSpend",
+    ],
+    extra: {
+      MaxRows: clampNumber(args.limit, 1, 10000, 1000),
+      Sort: [{ SortColumn: "Clicks", SortOrder: "Descending" }],
+    },
   });
 
-  return {
-    source: "Google Ads API",
-    client: context.clientKey,
-    customerId: context.customerId,
-    dateRange,
-    rows,
-  };
+  report.rows = filterRows(report.rows, { minClicks });
+
+  audit(req, "microsoft_ads_keyword_performance", args, {
+    rows: report.rows.length,
+    accountId: context.account.accountId,
+  });
+
+  return { ...report, minClicks };
 }
 
-async function ppcToSeoOpportunities(args, req) {
-  const context = getGoogleAdsContext(args);
-  const dateRange = normaliseDateRange(args, 366);
+async function microsoftAdsLandingPages(args, req) {
+  const context = getMicrosoftAdsContext(args);
+  const minClicks = clampNumber(args.min_clicks, 0, 100000, 1);
+  const report = await runTemplateReport({
+    context,
+    args,
+    reportType: "SearchTermLandingPageReportRequest",
+    reportName: "summon-search-term-landing-page",
+    columns: [
+      "TimePeriod",
+      "AccountName",
+      "AccountId",
+      "CampaignName",
+      "CampaignId",
+      "AdGroupName",
+      "AdGroupId",
+      "CampaignType",
+      "SearchQuery",
+      "Keyword",
+      "BidMatchType",
+      "DeliveredMatchType",
+      "FinalUrl",
+      "FinalUrlSource",
+      "Impressions",
+      "Clicks",
+      "Ctr",
+      "AverageCpc",
+      "Spend",
+      "Conversions",
+      "ConversionRate",
+      "CostPerConversion",
+      "Revenue",
+      "ReturnOnAdSpend",
+    ],
+  });
+
+  report.rows = filterRows(report.rows, { minClicks });
+
+  audit(req, "microsoft_ads_landing_pages", args, {
+    rows: report.rows.length,
+    accountId: context.account.accountId,
+  });
+
+  return { ...report, minClicks };
+}
+
+async function microsoftAdsPpcToSeoOpportunities(args, req) {
+  const context = getMicrosoftAdsContext(args);
   const minClicks = clampNumber(args.min_clicks, 0, 100000, 5);
   const minConversions = clampNumber(args.min_conversions, 0, 100000, 1);
   const limit = clampNumber(args.limit, 1, 5000, 500);
-  const rows = await fetchGoogleAdsSearchTerms(context.customerId, dateRange, {
-    minClicks,
-    limit,
+  const report = await runTemplateReport({
+    context,
+    args: { ...args, limit },
+    reportType: "SearchTermLandingPageReportRequest",
+    reportName: "summon-msads-ppc-to-seo",
+    columns: [
+      "SearchQuery",
+      "Keyword",
+      "CampaignName",
+      "CampaignType",
+      "FinalUrl",
+      "Impressions",
+      "Clicks",
+      "Spend",
+      "Conversions",
+      "ConversionRate",
+      "Revenue",
+      "ReturnOnAdSpend",
+    ],
   });
-  const opportunities = summarisePpcToSeo(rows, {
+
+  const opportunities = summarisePpcToSeo(report.rows, {
+    minClicks,
     minConversions,
     brandTerms: context.client.brandTerms || [],
   });
 
-  audit(req, "ppc_to_seo_opportunities", args, {
-    rows: rows.length,
+  audit(req, "microsoft_ads_ppc_to_seo_opportunities", args, {
+    rows: report.rows.length,
     opportunities: opportunities.length,
-    customerId: context.customerId,
+    accountId: context.account.accountId,
   });
 
   return {
-    source: "Google Ads API",
+    source: "Microsoft Advertising Reporting API",
     client: context.clientKey,
-    customerId: context.customerId,
-    dateRange,
+    accountId: context.account.accountId,
+    customerId: context.account.customerId,
+    dateRange: report.dateRange,
     method:
-      "Grouped templated Google Ads search term report. Validate with GSC, GA4, and DataForSEO before implementation.",
+      "Search term landing page report grouped into SEO opportunity candidates. Validate with GSC, GA4, DataForSEO, and page crawl before implementation.",
+    minClicks,
+    minConversions,
     opportunities,
   };
 }
 
-async function fetchGoogleAdsSearchTerms(customerId, dateRange, options) {
-  const query = `
-    SELECT
-      segments.date,
-      campaign.id,
-      campaign.name,
-      ad_group.id,
-      ad_group.name,
-      search_term_view.search_term,
-      segments.device,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.conversions,
-      metrics.conversions_value,
-      metrics.ctr,
-      metrics.average_cpc
-    FROM search_term_view
-    WHERE segments.date BETWEEN '${dateRange.startDate}' AND '${dateRange.endDate}'
-      AND metrics.clicks >= ${options.minClicks}
-    ORDER BY metrics.clicks DESC
-    LIMIT ${options.limit}
-  `;
-
-  return searchGoogleAds(customerId, query);
-}
-
-function summarisePpcToSeo(rows, options) {
-  const grouped = new Map();
-  for (const row of rows) {
-    const term = String(row.searchTermView?.searchTerm || "").trim();
-    if (!term) {
-      continue;
-    }
-
-    const key = normaliseSearchTermCluster(term);
-    const current = grouped.get(key) || {
-      cluster: key,
-      exampleTerms: [],
-      impressions: 0,
-      clicks: 0,
-      costMicros: 0,
-      conversions: 0,
-      conversionValue: 0,
-      containsBrand: containsAny(term, options.brandTerms),
-    };
-
-    if (current.exampleTerms.length < 5 && !current.exampleTerms.includes(term)) {
-      current.exampleTerms.push(term);
-    }
-
-    current.impressions += Number(row.metrics?.impressions || 0);
-    current.clicks += Number(row.metrics?.clicks || 0);
-    current.costMicros += Number(row.metrics?.costMicros || 0);
-    current.conversions += Number(row.metrics?.conversions || 0);
-    current.conversionValue += Number(row.metrics?.conversionsValue || 0);
-    current.containsBrand ||= containsAny(term, options.brandTerms);
-    grouped.set(key, current);
-  }
-
-  return [...grouped.values()]
-    .filter((item) => item.conversions >= options.minConversions)
-    .sort((a, b) => b.conversions - a.conversions || b.clicks - a.clicks)
-    .map((item) => ({
-      ...item,
-      cost: item.costMicros / 1_000_000,
-      recommendation: item.containsBrand
-        ? "Usually protect with brand SEO and sitelinks; only create new content if there is a clear non-brand intent variant."
-        : "Validate with GSC and DataForSEO. If organic coverage is weak, consider an SEO landing page or content cluster.",
-      nextEvidence:
-        "Check GSC query/page coverage, GA4 landing page conversions, and DataForSEO volume/difficulty before briefing implementation.",
-    }));
-}
-
-async function runGa4Report(propertyId, body) {
-  const contextKey = `google:ga4:${propertyId}`;
-  const cacheKey = stableCacheKey("google:ga4", propertyId, body);
-  return withCachedJson(cacheKey, cacheTtlForReportBody(body), async () => {
-    const token = await getGoogleAccessToken();
-    const response = await safeFetch(
-      "ga4_run_report",
-      `${GA4_BASE_URL}/properties/${encodeURIComponent(propertyId)}:runReport`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-      },
-      { contextKey },
-    );
-
-    return parseGoogleResponse(response, { circuitKey: contextKey });
+async function runTemplateReport({ context, args, reportType, reportName, columns, extra }) {
+  const dateRange = normaliseDateRange(args, 366);
+  const aggregation = normaliseAggregation(args.aggregation);
+  const limit = clampNumber(args.limit, 1, 10000, 1000);
+  const reportRequest = createReportRequest({
+    reportType,
+    reportName,
+    accountId: context.account.accountId,
+    dateRange,
+    aggregation,
+    columns,
+    extra,
   });
-}
-
-async function querySearchConsole(siteUrl, body) {
-  const contextKey = `google:gsc:${siteUrl}`;
-  const cacheKey = stableCacheKey("google:gsc", siteUrl, body);
-  return withCachedJson(cacheKey, cacheTtlForReportBody(body), async () => {
-    const token = await getGoogleAccessToken();
-    const response = await safeFetch(
-      "gsc_search_analytics",
-      `${GSC_BASE_URL}/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-      },
-      { contextKey },
-    );
-
-    return parseGoogleResponse(response, { circuitKey: contextKey });
-  });
-}
-
-async function searchGoogleAds(customerId, query) {
-  if (!process.env.GOOGLE_ADS_DEVELOPER_TOKEN) {
-    throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN is required for Google Ads tools.");
-  }
-
-  const normalisedCustomerId = stripCustomerId(customerId);
-  const normalisedQuery = normaliseGaql(query);
-  const contextKey = `google:ads:${normalisedCustomerId}`;
   const cacheKey = stableCacheKey(
-    "google:ads:searchStream",
-    normalisedCustomerId,
-    normalisedQuery,
+    "microsoft:report",
+    context.account.accountId,
+    reportRequest,
+  );
+  const rows = await withCachedJson(cacheKey, cacheTtlForDateRange(dateRange), () =>
+    runMicrosoftReport(context.account, reportRequest),
   );
 
-  return withCachedJson(cacheKey, cacheTtlForGaql(normalisedQuery), async () => {
-    const token = await getGoogleAccessToken();
-    const headers = {
-      authorization: `Bearer ${token}`,
-      "developer-token": process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-      "content-type": "application/json",
-    };
-
-    if (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID) {
-      headers["login-customer-id"] = stripCustomerId(
-        process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
-      );
-    }
-
-    const response = await safeFetch(
-      "google_ads_search_stream",
-      `${GOOGLE_ADS_BASE_URL}/customers/${normalisedCustomerId}/googleAds:searchStream`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ query: normalisedQuery }),
-      },
-      { contextKey },
-    );
-    const data = await parseGoogleResponse(response, { circuitKey: contextKey });
-
-    if (!Array.isArray(data)) {
-      return data.results || [];
-    }
-
-    return data.flatMap((chunk) => chunk.results || []);
-  });
+  return {
+    source: "Microsoft Advertising Reporting API",
+    client: context.clientKey,
+    accountId: context.account.accountId,
+    customerId: context.account.customerId,
+    reportType,
+    aggregation,
+    dateRange,
+    rows: rows.slice(0, limit),
+    rowCountBeforeLimit: rows.length,
+  };
 }
 
-async function getGoogleAccessToken() {
-  const required = ["GOOGLE_CLIENT_ID", "GOOGLE_REFRESH_TOKEN"];
-  const missing = required.filter((key) => !process.env[key]);
-  if (missing.length) {
-    throw new Error(`Missing Google OAuth variables: ${missing.join(", ")}`);
+function createReportRequest({
+  reportType,
+  reportName,
+  accountId,
+  dateRange,
+  aggregation,
+  columns,
+  extra,
+}) {
+  const reportColumns =
+    aggregation === "Summary"
+      ? columns.filter((column) => column !== "TimePeriod")
+      : columns;
+
+  return {
+    ExcludeColumnHeaders: false,
+    ExcludeReportFooter: true,
+    ExcludeReportHeader: true,
+    Format: "Csv",
+    FormatVersion: "2.0",
+    ReportName: reportName,
+    ReturnOnlyCompleteData: false,
+    Type: reportType,
+    Aggregation: aggregation,
+    Columns: reportColumns,
+    Scope: {
+      AccountIds: [asLongNumber(accountId, "accountId")],
+    },
+    Time: {
+      CustomDateRangeStart: dateObject(dateRange.startDate),
+      CustomDateRangeEnd: dateObject(dateRange.endDate),
+      ReportTimeZone: MICROSOFT_REPORT_TIME_ZONE,
+    },
+    ...(extra || {}),
+  };
+}
+
+async function runMicrosoftReport(account, reportRequest) {
+  await enforceRateLimit(
+    `microsoft:report-submit:${account.accountId}`,
+    READONLY_SAFETY.reportSubmitLimit,
+    READONLY_SAFETY.reportSubmitWindowMs,
+  );
+  const submitResponse = await callMicrosoftReporting(
+    account,
+    "/GenerateReport/Submit",
+    {
+      ReportRequest: reportRequest,
+    },
+  );
+  const reportRequestId = submitResponse.ReportRequestId;
+  if (!reportRequestId) {
+    throw new Error("Microsoft Ads did not return a ReportRequestId.");
   }
 
-  if (googleTokenCache && googleTokenCache.expiresAt > Date.now() + 60_000) {
-    return googleTokenCache.accessToken;
+  let lastStatus = null;
+  for (let attempt = 0; attempt < REPORT_POLL_MAX_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(REPORT_POLL_INTERVAL_MS);
+    }
+
+    const pollResponse = await callMicrosoftReporting(
+      account,
+      "/GenerateReport/Poll",
+      {
+        ReportRequestId: reportRequestId,
+      },
+    );
+    lastStatus = pollResponse.ReportRequestStatus || null;
+    const status = lastStatus?.Status;
+
+    if (status === "Success") {
+      if (!lastStatus.ReportDownloadUrl) {
+        return [];
+      }
+      allowReportDownloadUrl(lastStatus.ReportDownloadUrl);
+      const csv = await downloadReportCsv(lastStatus.ReportDownloadUrl, account);
+      return parseCsvObjects(csv);
+    }
+
+    if (status === "Error") {
+      throw new Error("Microsoft Ads report generation failed.");
+    }
+  }
+
+  throw new Error(
+    `Microsoft Ads report was not ready after ${REPORT_POLL_MAX_ATTEMPTS} polls. Last status: ${
+      lastStatus?.Status || "unknown"
+    }`,
+  );
+}
+
+async function callMicrosoftReporting(account, path, body) {
+  const accessToken = await getMicrosoftAccessToken();
+  const endpointKey =
+    path === "/GenerateReport/Submit"
+      ? "microsoft_report_submit"
+      : "microsoft_report_poll";
+  const contextKey = `microsoft:ads:${account.accountId}`;
+  const response = await safeFetch(
+    endpointKey,
+    `${MICROSOFT_REPORTING_BASE_URL}${path}`,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+        developerToken: requireEnv("MICROSOFT_ADS_DEVELOPER_TOKEN"),
+        customerId: account.customerId,
+        customerAccountId: account.accountId,
+      },
+      body: JSON.stringify(body),
+    },
+    { contextKey },
+  );
+
+  return parseMicrosoftResponse(response, { circuitKey: contextKey });
+}
+
+async function getMicrosoftAccessToken() {
+  const required = [
+    "MICROSOFT_ADS_CLIENT_ID",
+    "MICROSOFT_ADS_CLIENT_SECRET",
+    "MICROSOFT_ADS_REFRESH_TOKEN",
+  ];
+  const missing = required.filter((key) => !process.env[key]);
+  if (missing.length) {
+    throw new Error(`Missing Microsoft Ads OAuth variables: ${missing.join(", ")}`);
+  }
+
+  if (microsoftTokenCache && microsoftTokenCache.expiresAt > Date.now() + 60_000) {
+    return microsoftTokenCache.accessToken;
   }
 
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID,
-    refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
+    client_id: process.env.MICROSOFT_ADS_CLIENT_ID,
+    client_secret: process.env.MICROSOFT_ADS_CLIENT_SECRET,
+    refresh_token: process.env.MICROSOFT_ADS_REFRESH_TOKEN,
     grant_type: "refresh_token",
+    scope: MICROSOFT_ADS_SCOPE,
   });
-  if (process.env.GOOGLE_CLIENT_SECRET) {
-    params.set("client_secret", process.env.GOOGLE_CLIENT_SECRET);
-  }
 
   const response = await safeFetch(
-    "google_oauth_token",
-    GOOGLE_TOKEN_URL,
+    "microsoft_oauth_token",
+    MICROSOFT_TOKEN_URL,
     {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: params,
     },
-    { contextKey: "google:auth" },
+    { contextKey: "microsoft:auth" },
   );
-  const data = await parseGoogleResponse(response, {
-    circuitKey: "google:auth",
+  const data = await parseMicrosoftResponse(response, {
+    circuitKey: "microsoft:auth",
     providerAuth: true,
   });
-  googleTokenCache = {
+  microsoftTokenCache = {
     accessToken: data.access_token,
     expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
   };
-  return googleTokenCache.accessToken;
+  return microsoftTokenCache.accessToken;
 }
 
-async function parseGoogleResponse(response, meta = {}) {
+async function parseMicrosoftResponse(response, meta = {}) {
   const text = await response.text();
   let data = null;
   if (text) {
@@ -1051,12 +900,47 @@ async function parseGoogleResponse(response, meta = {}) {
     const message =
       data?.error?.message ||
       data?.error_description ||
+      data?.Message ||
+      data?.raw ||
       `${response.status} ${response.statusText}`;
     handleVendorStopState(response.status, message, data, meta);
     throw new Error(message);
   }
 
   return data || {};
+}
+
+async function downloadReportCsv(url, account) {
+  const contextKey = `microsoft:ads:${account.accountId}`;
+  const response = await safeFetch(
+    "microsoft_report_download",
+    url,
+    { method: "GET" },
+    { contextKey },
+  );
+  if (!response.ok) {
+    handleVendorStopState(
+      response.status,
+      `${response.status} ${response.statusText}`,
+      null,
+      { circuitKey: contextKey },
+    );
+    throw new Error(
+      `Could not download Microsoft Ads report: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const zip = new AdmZip(buffer);
+  const entry = zip
+    .getEntries()
+    .find((candidate) => !candidate.isDirectory && /\.csv$/i.test(candidate.entryName));
+
+  if (!entry) {
+    throw new Error("Microsoft Ads report ZIP did not contain a CSV file.");
+  }
+
+  return entry.getData().toString("utf8");
 }
 
 async function safeFetch(endpointKey, url, options = {}, meta = {}) {
@@ -1067,12 +951,12 @@ async function safeFetch(endpointKey, url, options = {}, meta = {}) {
 
   return withConcurrency(contextKey, async () => {
     await enforceRateLimit(
-      "google:global",
+      "microsoft:global",
       READONLY_SAFETY.globalRateLimit,
       READONLY_SAFETY.rateWindowMs,
     );
     await enforceRateLimit(
-      `google:${contextKey}`,
+      `microsoft:${contextKey}`,
       READONLY_SAFETY.perContextRateLimit,
       READONLY_SAFETY.rateWindowMs,
     );
@@ -1105,7 +989,7 @@ async function fetchWithRetry(endpointKey, requestUrl, options, meta) {
   }
 
   throw new Error(
-    `Google request failed after retries: ${endpointKey} ${
+    `Microsoft Ads request failed after retries: ${endpointKey} ${
       lastError?.message || "unknown error"
     }`,
   );
@@ -1126,45 +1010,66 @@ async function executeSafeFetchAttempt(requestUrl, options) {
 
 function assertAllowedOutboundRequest(endpointKey, requestUrl, options) {
   const method = String(options.method || "GET").toUpperCase();
-  if (method !== "POST") {
-    throw new Error(`Blocked non-POST outbound request: ${endpointKey}`);
-  }
+  const path = requestUrl.pathname;
+  const host = requestUrl.hostname;
 
   assertNoDangerousOutboundIntent(endpointKey, requestUrl, options);
 
-  const path = requestUrl.pathname;
-  const host = requestUrl.hostname;
   const allowed =
-    (endpointKey === "google_oauth_token" &&
-      requestUrl.toString() === GOOGLE_TOKEN_URL) ||
-    (endpointKey === "ga4_run_report" &&
-      host === "analyticsdata.googleapis.com" &&
-      /^\/v1beta\/properties\/[^/]+:runReport$/.test(path)) ||
-    (endpointKey === "gsc_search_analytics" &&
-      host === "searchconsole.googleapis.com" &&
-      /^\/webmasters\/v3\/sites\/[^/]+\/searchAnalytics\/query$/.test(path)) ||
-    (endpointKey === "google_ads_search_stream" &&
-      host === "googleads.googleapis.com" &&
-      /^\/v\d+\/customers\/\d+\/googleAds:searchStream$/.test(path));
+    (endpointKey === "microsoft_oauth_token" &&
+      method === "POST" &&
+      requestUrl.toString() === MICROSOFT_TOKEN_URL) ||
+    (endpointKey === "microsoft_report_submit" &&
+      method === "POST" &&
+      isMicrosoftReportingHost(host) &&
+      path === "/Reporting/v13/GenerateReport/Submit") ||
+    (endpointKey === "microsoft_report_poll" &&
+      method === "POST" &&
+      isMicrosoftReportingHost(host) &&
+      path === "/Reporting/v13/GenerateReport/Poll") ||
+    (endpointKey === "microsoft_report_download" &&
+      method === "GET" &&
+      isAllowedReportDownloadUrl(requestUrl.toString()));
 
   if (!allowed) {
     throw new Error(
-      `Blocked non-reporting Google endpoint: ${endpointKey} ${redactUrlForLog(
+      `Blocked non-reporting Microsoft Ads endpoint: ${endpointKey} ${redactUrlForLog(
         requestUrl,
       )}`,
     );
   }
 }
 
+function isMicrosoftReportingHost(host) {
+  return [
+    "reporting.api.bingads.microsoft.com",
+    "reporting.api.sandbox.bingads.microsoft.com",
+  ].includes(host);
+}
+
 function assertNoDangerousOutboundIntent(endpointKey, requestUrl, options) {
-  const body = endpointKey.includes("oauth") ? "" : bodyToString(options.body);
+  const body =
+    endpointKey.includes("oauth") || endpointKey === "microsoft_report_download"
+      ? ""
+      : bodyToString(options.body);
   const subject = `${requestUrl.toString()} ${body}`.toLowerCase();
   const blocked = READONLY_DENYLIST.find((term) =>
     subject.includes(term.toLowerCase()),
   );
   if (blocked) {
-    throw new Error(`Blocked unsafe Google Ads API intent: ${blocked}`);
+    throw new Error(`Blocked unsafe Microsoft Ads API intent: ${blocked}`);
   }
+}
+
+function allowReportDownloadUrl(url) {
+  safetyState.allowedReportDownloads.set(new URL(String(url)).toString(), {
+    expiresAt: Date.now() + READONLY_SAFETY.reportDownloadTtlMs,
+  });
+}
+
+function isAllowedReportDownloadUrl(url) {
+  pruneExpiredMaps();
+  return safetyState.allowedReportDownloads.has(new URL(String(url)).toString());
 }
 
 async function withCachedJson(cacheKey, ttlMs, load) {
@@ -1261,7 +1166,7 @@ function handleVendorStopState(status, message, data, meta) {
 
   const circuitKey =
     classification.providerAuth || meta.providerAuth
-      ? "google:auth"
+      ? "microsoft:auth"
       : meta.circuitKey;
   if (circuitKey) {
     openCircuit(circuitKey, classification.reason);
@@ -1277,15 +1182,17 @@ function classifyVendorStopState(status, message, data) {
     text.includes("revoked") ||
     text.includes("unauthorized")
   ) {
-    return { providerAuth: true, reason: "Google OAuth access is invalid or revoked." };
+    return {
+      providerAuth: true,
+      reason: "Microsoft Ads OAuth access is invalid or revoked.",
+    };
   }
 
   if (
     status === 403 ||
-    text.includes("permission_denied") ||
+    text.includes("permission") ||
     text.includes("access_denied") ||
     text.includes("authorization") ||
-    text.includes("customer_not_enabled") ||
     text.includes("suspended") ||
     text.includes("restricted") ||
     text.includes("disabled") ||
@@ -1295,7 +1202,8 @@ function classifyVendorStopState(status, message, data) {
   ) {
     return {
       providerAuth: false,
-      reason: "Google account access is denied, restricted, suspended, or billing-blocked.",
+      reason:
+        "Microsoft Ads account access is denied, restricted, suspended, or billing-blocked.",
     };
   }
 
@@ -1310,7 +1218,7 @@ function assertCircuitClosed(key) {
 
   if (circuit.until > Date.now()) {
     throw new Error(
-      `Google connector circuit open for ${key} until ${new Date(
+      `Microsoft Ads connector circuit open for ${key} until ${new Date(
         circuit.until,
       ).toISOString()}: ${circuit.reason}`,
     );
@@ -1354,19 +1262,8 @@ async function drainResponse(response) {
   }
 }
 
-function cacheTtlForReportBody(body) {
-  const endDate =
-    body?.endDate ||
-    body?.dateRanges?.[0]?.endDate ||
-    body?.dateRanges?.[0]?.end_date;
-  return isToday(endDate)
-    ? READONLY_SAFETY.todayCacheTtlMs
-    : READONLY_SAFETY.cacheTtlMs;
-}
-
-function cacheTtlForGaql(query) {
-  const match = String(query).match(/between\s+'(\d{4}-\d{2}-\d{2})'\s+and\s+'(\d{4}-\d{2}-\d{2})'/i);
-  return isToday(match?.[2])
+function cacheTtlForDateRange(dateRange) {
+  return isToday(dateRange?.endDate)
     ? READONLY_SAFETY.todayCacheTtlMs
     : READONLY_SAFETY.cacheTtlMs;
 }
@@ -1401,6 +1298,11 @@ function pruneExpiredMaps() {
       safetyState.cache.delete(key);
     }
   }
+  for (const [key, entry] of safetyState.allowedReportDownloads.entries()) {
+    if (entry.expiresAt <= now) {
+      safetyState.allowedReportDownloads.delete(key);
+    }
+  }
   for (const [key, circuit] of safetyState.circuitBreakers.entries()) {
     if (circuit.until <= now) {
       safetyState.circuitBreakers.delete(key);
@@ -1415,41 +1317,186 @@ function createSafetyState() {
     cache: new Map(),
     inFlight: new Map(),
     circuitBreakers: new Map(),
+    allowedReportDownloads: new Map(),
   };
 }
 
-function getGa4Context(args) {
-  const { clientKey, client } = requireClient(args.client_key);
-  const propertyId = args.property_id || firstAllowed(client.ga4Properties, "GA4");
-  if (!client.ga4Properties?.includes(String(propertyId))) {
-    throw new Error(`GA4 property is not allowlisted for client: ${clientKey}`);
+function parseCsvObjects(csv) {
+  const rows = parseCsv(csv).filter((row) =>
+    row.some((cell) => String(cell).trim() !== ""),
+  );
+  if (!rows.length) {
+    return [];
   }
-  return { clientKey, client, propertyId: String(propertyId) };
+
+  const headers = rows[0].map((header) => String(header).trim());
+  return rows.slice(1).map((row) => {
+    const object = {};
+    headers.forEach((header, index) => {
+      object[header] = parseCellValue(row[index] ?? "");
+    });
+    return object;
+  });
 }
 
-function getGscContext(args) {
-  const { clientKey, client } = requireClient(args.client_key);
-  const siteUrl = args.site_url || firstAllowed(client.gscSites, "GSC");
-  if (!client.gscSites?.includes(String(siteUrl))) {
-    throw new Error(`GSC site is not allowlisted for client: ${clientKey}`);
+function parseCsv(input) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    const next = input[index + 1];
+
+    if (quoted) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = true;
+      continue;
+    }
+
+    if (char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    if (char !== "\r") {
+      cell += char;
+    }
   }
-  return { clientKey, client, siteUrl: String(siteUrl) };
+
+  row.push(cell);
+  rows.push(row);
+  return rows;
 }
 
-function getGoogleAdsContext(args) {
+function parseCellValue(value) {
+  const text = String(value || "").trim();
+  if (!text || text === "--") {
+    return "";
+  }
+
+  const percent = text.endsWith("%");
+  const numeric = Number(text.replace(/[%,$£€,\s]/g, ""));
+  if (Number.isFinite(numeric) && /^-?[\d,.$£€\s]+%?$/.test(text)) {
+    return percent ? numeric / 100 : numeric;
+  }
+
+  return text;
+}
+
+function summarisePpcToSeo(rows, options) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const query = String(row.SearchQuery || "").trim();
+    if (!query) {
+      continue;
+    }
+
+    const key = normaliseSearchTermCluster(query);
+    const current = grouped.get(key) || {
+      cluster: key,
+      exampleQueries: [],
+      exampleLandingPages: [],
+      campaigns: [],
+      impressions: 0,
+      clicks: 0,
+      spend: 0,
+      conversions: 0,
+      revenue: 0,
+      containsBrand: containsAny(query, options.brandTerms),
+    };
+
+    if (current.exampleQueries.length < 5 && !current.exampleQueries.includes(query)) {
+      current.exampleQueries.push(query);
+    }
+    if (
+      row.FinalUrl &&
+      current.exampleLandingPages.length < 5 &&
+      !current.exampleLandingPages.includes(row.FinalUrl)
+    ) {
+      current.exampleLandingPages.push(row.FinalUrl);
+    }
+    if (
+      row.CampaignName &&
+      current.campaigns.length < 5 &&
+      !current.campaigns.includes(row.CampaignName)
+    ) {
+      current.campaigns.push(row.CampaignName);
+    }
+
+    current.impressions += Number(row.Impressions || 0);
+    current.clicks += Number(row.Clicks || 0);
+    current.spend += Number(row.Spend || 0);
+    current.conversions += Number(row.Conversions || 0);
+    current.revenue += Number(row.Revenue || 0);
+    current.containsBrand ||= containsAny(query, options.brandTerms);
+    grouped.set(key, current);
+  }
+
+  return [...grouped.values()]
+    .filter(
+      (item) =>
+        item.clicks >= options.minClicks &&
+        item.conversions >= options.minConversions,
+    )
+    .sort((a, b) => b.conversions - a.conversions || b.clicks - a.clicks)
+    .map((item) => ({
+      ...item,
+      recommendation: item.containsBrand
+        ? "Usually protect with brand SEO and sitelinks; only create new content if there is a clear non-brand intent variant."
+        : "Validate with GSC, GA4, DataForSEO, and page crawl. If organic coverage is weak, consider an SEO landing page or content cluster.",
+      nextEvidence:
+        "Check Google Search Console query/page coverage, GA4 landing page conversions, DataForSEO volume/difficulty, and current page indexability.",
+    }));
+}
+
+function filterRows(rows, options) {
+  return rows.filter((row) => Number(row.Clicks || 0) >= options.minClicks);
+}
+
+function getMicrosoftAdsContext(args) {
   const { clientKey, client } = requireClient(args.client_key);
-  const customerId =
-    args.customer_id || firstAllowed(client.googleAdsCustomerIds, "Google Ads");
-  const normalisedAllowed = (client.googleAdsCustomerIds || []).map(stripCustomerId);
-  if (!normalisedAllowed.includes(stripCustomerId(customerId))) {
+  const requestedAccountId = args.account_id
+    ? stripId(args.account_id)
+    : client.microsoftAdsAccounts[0]?.accountId;
+  if (!requestedAccountId) {
+    throw new Error(`No Microsoft Ads account is configured for client: ${clientKey}`);
+  }
+
+  const account = client.microsoftAdsAccounts.find(
+    (candidate) => candidate.accountId === requestedAccountId,
+  );
+  if (!account) {
     throw new Error(
-      `Google Ads customer ID is not allowlisted for client: ${clientKey}`,
+      `Microsoft Ads account ID is not allowlisted for client: ${clientKey}`,
     );
   }
+
   return {
     clientKey,
     client,
-    customerId: stripCustomerId(customerId),
+    account,
   };
 }
 
@@ -1460,13 +1507,6 @@ function requireClient(clientKey) {
     throw new Error(`Unknown or unconfigured client_key: ${key}`);
   }
   return { clientKey: key, client };
-}
-
-function firstAllowed(values, label) {
-  if (!Array.isArray(values) || !values.length) {
-    throw new Error(`No ${label} source is configured for this client.`);
-  }
-  return values[0];
 }
 
 function parseClientAllowlist(raw) {
@@ -1481,11 +1521,7 @@ function parseClientAllowlist(raw) {
         key,
         {
           label: value.label || key,
-          ga4Properties: asStringArray(value.ga4Properties),
-          gscSites: asStringArray(value.gscSites),
-          googleAdsCustomerIds: asStringArray(value.googleAdsCustomerIds).map(
-            stripCustomerId,
-          ),
+          microsoftAdsAccounts: asMicrosoftAdsAccounts(value),
           brandTerms: asStringArray(value.brandTerms),
         },
       ]),
@@ -1494,6 +1530,38 @@ function parseClientAllowlist(raw) {
     console.error(`Invalid CLIENT_ALLOWLIST_JSON: ${error.message}`);
     process.exit(1);
   }
+}
+
+function asMicrosoftAdsAccounts(value) {
+  if (Array.isArray(value.microsoftAdsAccounts)) {
+    return value.microsoftAdsAccounts.map(normaliseMicrosoftAdsAccount);
+  }
+
+  const accountIds = asStringArray(value.microsoftAdsAccountIds);
+  const customerIds = asStringArray(value.microsoftAdsCustomerIds);
+  return accountIds.map((accountId, index) =>
+    normaliseMicrosoftAdsAccount({
+      accountId,
+      customerId: customerIds[index] || value.microsoftAdsCustomerId,
+      label: value.label,
+    }),
+  );
+}
+
+function normaliseMicrosoftAdsAccount(account) {
+  const accountId = stripId(account.accountId);
+  const customerId = stripId(account.customerId);
+  if (!accountId || !customerId) {
+    throw new Error(
+      "Each Microsoft Ads allowlist entry requires accountId and customerId.",
+    );
+  }
+
+  return {
+    label: account.label || accountId,
+    accountId,
+    customerId,
+  };
 }
 
 function asStringArray(value) {
@@ -1552,61 +1620,23 @@ function numberSchema(minimum, maximum, defaultValue) {
   };
 }
 
-function exactStringFilter(fieldName, value) {
+function aggregationSchema() {
   return {
-    filter: {
-      fieldName,
-      stringFilter: {
-        matchType: "EXACT",
-        value,
-      },
-    },
+    type: "string",
+    enum: ["Daily", "Weekly", "Monthly", "Summary"],
+    default: "Daily",
   };
 }
 
-function splitBrandQueries(rows, brandTerms) {
-  const summary = {
-    brand: emptyGscSummary(),
-    nonBrand: emptyGscSummary(),
-    totalRows: rows.length,
-  };
-
-  for (const row of rows) {
-    const query = String(row.keys?.[0] || "");
-    const bucket = containsAny(query, brandTerms) ? summary.brand : summary.nonBrand;
-    bucket.rows += 1;
-    bucket.clicks += Number(row.clicks || 0);
-    bucket.impressions += Number(row.impressions || 0);
-    bucket.positionWeighted += Number(row.position || 0) * Number(row.impressions || 0);
-  }
-
-  for (const bucket of [summary.brand, summary.nonBrand]) {
-    bucket.ctr = bucket.impressions ? bucket.clicks / bucket.impressions : 0;
-    bucket.averagePosition = bucket.impressions
-      ? bucket.positionWeighted / bucket.impressions
-      : 0;
-    delete bucket.positionWeighted;
-  }
-
-  return summary;
+function normaliseAggregation(value) {
+  return ["Daily", "Weekly", "Monthly", "Summary"].includes(value)
+    ? value
+    : "Daily";
 }
 
-function emptyGscSummary() {
-  return {
-    rows: 0,
-    clicks: 0,
-    impressions: 0,
-    ctr: 0,
-    averagePosition: 0,
-    positionWeighted: 0,
-  };
-}
-
-function containsAny(value, terms) {
-  const normalised = String(value || "").toLowerCase();
-  return (terms || []).some((term) =>
-    normalised.includes(String(term).toLowerCase()),
-  );
+function dateObject(dateString) {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return { Day: day, Month: month, Year: year };
 }
 
 function normaliseSearchTermCluster(term) {
@@ -1621,70 +1651,18 @@ function normaliseSearchTermCluster(term) {
     .join(" ");
 }
 
-function normaliseGaql(query) {
-  return String(query)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(" ");
+function containsAny(value, terms) {
+  const normalised = String(value || "").toLowerCase();
+  return (terms || []).some((term) =>
+    normalised.includes(String(term).toLowerCase()),
+  );
 }
 
-function stripCustomerId(value) {
+function stripId(value) {
   return String(value || "").replaceAll("-", "").trim();
 }
 
-function clampNumber(value, minimum, maximum, defaultValue) {
-  const number = Number(value ?? defaultValue);
-  if (!Number.isFinite(number)) {
-    return defaultValue;
-  }
-  return Math.min(maximum, Math.max(minimum, Math.trunc(number)));
-}
-
-function parsePositiveInt(value, defaultValue) {
-  const parsed = Number.parseInt(value || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
-}
-
-function requireString(value, name) {
-  const string = String(value || "").trim();
-  if (!string) {
-    throw new Error(`${name} is required.`);
-  }
-  return string;
-}
-
-function isIsoDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function dateDiffDays(startDate, endDate) {
-  const start = Date.parse(`${startDate}T00:00:00Z`);
-  const end = Date.parse(`${endDate}T00:00:00Z`);
-  return Math.round((end - start) / 86_400_000);
-}
-
-function shiftDate(dateString, days) {
-  const date = new Date(`${dateString}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return formatDate(date);
-}
-
-function formatDate(date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function maskArray(values) {
-  return (values || []).map((value) => {
-    const text = String(value);
-    if (text.length <= 6) {
-      return text;
-    }
-    return `${text.slice(0, 3)}...${text.slice(-3)}`;
-  });
-}
-
-function maskIdentifier(value) {
+function maskId(value) {
   const text = String(value || "");
   if (text.length <= 6) {
     return text;
@@ -1709,7 +1687,7 @@ function sanitizeForAudit(value, key = "") {
     loweredKey.endsWith("accountid") ||
     loweredKey.endsWith("customerid")
   ) {
-    return maskIdentifier(value);
+    return maskId(value);
   }
 
   if (loweredKey.includes("url")) {
@@ -1762,15 +1740,72 @@ function randomJitter(maxMs) {
   return Math.floor(Math.random() * maxMs);
 }
 
+function asLongNumber(value, label) {
+  const numeric = Number(stripId(value));
+  if (!Number.isSafeInteger(numeric) || numeric <= 0) {
+    throw new Error(`${label} must be a positive safe integer.`);
+  }
+  return numeric;
+}
+
+function clampNumber(value, minimum, maximum, defaultValue) {
+  const number = Number(value ?? defaultValue);
+  if (!Number.isFinite(number)) {
+    return defaultValue;
+  }
+  return Math.min(maximum, Math.max(minimum, Math.trunc(number)));
+}
+
+function parsePositiveInt(value, defaultValue) {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function requireString(value, name) {
+  const string = String(value || "").trim();
+  if (!string) {
+    throw new Error(`${name} is required.`);
+  }
+  return string;
+}
+
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is required.`);
+  }
+  return value;
+}
+
+function isIsoDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function dateDiffDays(startDate, endDate) {
+  const start = Date.parse(`${startDate}T00:00:00Z`);
+  const end = Date.parse(`${endDate}T00:00:00Z`);
+  return Math.round((end - start) / 86_400_000);
+}
+
+function shiftDate(dateString, days) {
+  const date = new Date(`${dateString}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatDate(date);
+}
+
+function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function audit(req, tool, args, result) {
   console.log(
     JSON.stringify({
       event: "mcp_tool_call",
-      service: "summon-google-performance-mcp",
+      service: "summon-microsoft-ads-mcp",
       tool,
       clientKey: args.client_key || null,
       result: sanitizeForAudit(result),
@@ -2148,7 +2183,7 @@ function renderConsentPage(params) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Connect Summon Google Performance to Claude</title>
+  <title>Connect Summon Microsoft Ads to Claude</title>
   <style>
     body {
       color: #1f2933;
@@ -2192,8 +2227,8 @@ function renderConsentPage(params) {
 </head>
 <body>
   <main>
-    <h1>Connect Summon Google Performance to Claude</h1>
-    <p>This lets Claude use Summon's read-only GA4, Search Console, and Google Ads reporting connector for SEO and GEO workflows.</p>
+    <h1>Connect Summon Microsoft Ads to Claude</h1>
+    <p>This lets Claude use Summon's read-only Microsoft Advertising reporting connector for SEO, GEO, and PPC-to-SEO workflows.</p>
     <form method="post" action="/authorize">
       ${hiddenFields}
       <button type="submit">Connect</button>

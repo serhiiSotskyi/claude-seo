@@ -51,12 +51,15 @@ Google API access:
 
 ```text
 GOOGLE_CLIENT_ID=<google-oauth-client-id>
-GOOGLE_CLIENT_SECRET=<google-oauth-client-secret>
+GOOGLE_CLIENT_SECRET=<optional-google-oauth-client-secret>
 GOOGLE_REFRESH_TOKEN=<refresh-token-with-required-scopes>
 GOOGLE_ADS_DEVELOPER_TOKEN=<google-ads-developer-token>
 GOOGLE_ADS_LOGIN_CUSTOMER_ID=<optional-mcc-id-without-dashes>
 GOOGLE_ADS_API_VERSION=v24
 ```
+
+`GOOGLE_CLIENT_SECRET` is optional when the refresh token was created with a
+desktop/PKCE OAuth client. It should be set for web OAuth clients.
 
 Client allowlist:
 
