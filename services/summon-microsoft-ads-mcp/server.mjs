@@ -7,6 +7,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
+const SERVICE_NAME = "summon-microsoft-ads-mcp";
 const PUBLIC_PORT = Number.parseInt(process.env.PORT || "3000", 10);
 const MICROSOFT_ADS_ENVIRONMENT =
   process.env.MICROSOFT_ADS_ENVIRONMENT || "production";
@@ -118,6 +119,16 @@ const READONLY_SAFETY = {
   maxAttempts: parsePositiveInt(process.env.SAFETY_MAX_ATTEMPTS, 3),
 };
 
+const MONITORING_WEBHOOK_URL =
+  process.env.N8N_MONITOR_WEBHOOK_URL || process.env.MONITORING_WEBHOOK_URL || "";
+const MONITORING_WEBHOOK_SECRET = process.env.MONITORING_WEBHOOK_SECRET || "";
+const MONITORING_TIMEOUT_MS = parsePositiveInt(
+  process.env.MONITORING_TIMEOUT_MS,
+  1_500,
+);
+const MONITORING_ENVIRONMENT =
+  process.env.RAILWAY_ENVIRONMENT_NAME || process.env.NODE_ENV || "production";
+
 // readonly-safety-allow-risk-terms:start
 const READONLY_DENYLIST = [
   "CampaignManagement",
@@ -146,9 +157,12 @@ app.options("*", (_req, res) => {
 app.get("/health", (_req, res) => {
   res.status(200).json({
     ok: true,
-    service: "summon-microsoft-ads-mcp",
+    service: SERVICE_NAME,
     environment: MICROSOFT_ADS_ENVIRONMENT,
     clients: Object.keys(clients).length,
+    monitoring: {
+      enabled: Boolean(MONITORING_WEBHOOK_URL),
+    },
     auth: {
       staticBearer: staticBearerEnabled,
       oauth: oauthEnabled,
@@ -387,7 +401,7 @@ async function handleRpcRequest(request, req) {
         protocolVersion: "2025-06-18",
         capabilities: { tools: {} },
         serverInfo: {
-          name: "summon-microsoft-ads-mcp",
+          name: SERVICE_NAME,
           version: "0.1.0",
         },
       });
@@ -422,6 +436,12 @@ async function handleRpcRequest(request, req) {
     return rpcError(id, -32601, `Method not found: ${request.method}`);
   } catch (error) {
     console.error("MCP request failed:", error);
+    emitMonitoringEvent({
+      event: "mcp_tool_error",
+      tool: request?.params?.name || request?.method || "unknown",
+      clientKey: request?.params?.arguments?.client_key || null,
+      errorMessage: safeErrorMessage(error),
+    });
     return rpcError(id, -32000, error.message || "Request failed.");
   }
 }
@@ -946,8 +966,25 @@ async function downloadReportCsv(url, account) {
 async function safeFetch(endpointKey, url, options = {}, meta = {}) {
   const requestUrl = new URL(url);
   const contextKey = meta.contextKey || endpointKey;
-  assertCircuitClosed(contextKey);
-  assertAllowedOutboundRequest(endpointKey, requestUrl, options);
+  try {
+    assertCircuitClosed(contextKey);
+    assertAllowedOutboundRequest(endpointKey, requestUrl, options);
+  } catch (error) {
+    emitMonitoringEvent(
+      outboundMonitoringEvent(
+        "outbound_api_blocked",
+        endpointKey,
+        requestUrl,
+        options,
+        { contextKey },
+        {
+          outcome: "blocked",
+          errorMessage: safeErrorMessage(error),
+        },
+      ),
+    );
+    throw error;
+  }
 
   return withConcurrency(contextKey, async () => {
     await enforceRateLimit(
@@ -965,22 +1002,62 @@ async function safeFetch(endpointKey, url, options = {}, meta = {}) {
 }
 
 async function fetchWithRetry(endpointKey, requestUrl, options, meta) {
+  const startedAt = Date.now();
   let lastError = null;
+  const transientStatuses = [];
   for (let attempt = 0; attempt < READONLY_SAFETY.maxAttempts; attempt += 1) {
     try {
       const response = await executeSafeFetchAttempt(requestUrl, options);
       if (!isRetryableStatus(response.status)) {
+        emitMonitoringEvent(
+          outboundMonitoringEvent(
+            "outbound_api_call",
+            endpointKey,
+            requestUrl,
+            options,
+            meta,
+            {
+              outcome: response.ok ? "ok" : "error",
+              status: response.status,
+              attempts: attempt + 1,
+              retryCount: attempt,
+              durationMs: Date.now() - startedAt,
+              transientStatuses,
+              vendorRequestId: responseTrackingId(response),
+            },
+          ),
+        );
         return response;
       }
 
       if (attempt >= READONLY_SAFETY.maxAttempts - 1) {
+        emitMonitoringEvent(
+          outboundMonitoringEvent(
+            "outbound_api_call",
+            endpointKey,
+            requestUrl,
+            options,
+            meta,
+            {
+              outcome: "retry_exhausted",
+              status: response.status,
+              attempts: attempt + 1,
+              retryCount: attempt,
+              durationMs: Date.now() - startedAt,
+              transientStatuses,
+              vendorRequestId: responseTrackingId(response),
+            },
+          ),
+        );
         return response;
       }
 
+      transientStatuses.push(response.status);
       await drainResponse(response);
       await sleep(retryDelayMs(response, attempt));
     } catch (error) {
       lastError = error;
+      transientStatuses.push("network_error");
       if (attempt >= READONLY_SAFETY.maxAttempts - 1) {
         break;
       }
@@ -988,11 +1065,29 @@ async function fetchWithRetry(endpointKey, requestUrl, options, meta) {
     }
   }
 
-  throw new Error(
+  const finalError = new Error(
     `Microsoft Ads request failed after retries: ${endpointKey} ${
       lastError?.message || "unknown error"
     }`,
   );
+  emitMonitoringEvent(
+    outboundMonitoringEvent(
+      "outbound_api_call",
+      endpointKey,
+      requestUrl,
+      options,
+      meta,
+      {
+        outcome: "network_error",
+        attempts: READONLY_SAFETY.maxAttempts,
+        retryCount: READONLY_SAFETY.maxAttempts - 1,
+        durationMs: Date.now() - startedAt,
+        transientStatuses,
+        errorMessage: safeErrorMessage(finalError),
+      },
+    ),
+  );
+  throw finalError;
 }
 
 async function executeSafeFetchAttempt(requestUrl, options) {
@@ -1076,11 +1171,22 @@ async function withCachedJson(cacheKey, ttlMs, load) {
   pruneExpiredMaps();
   const cached = safetyState.cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
+    emitMonitoringEvent({
+      event: "cache_hit",
+      provider: "microsoft",
+      cacheKeyHash: hashForAudit(cacheKey),
+      ttlRemainingMs: cached.expiresAt - Date.now(),
+    });
     return cloneJson(cached.value);
   }
 
   const inFlight = safetyState.inFlight.get(cacheKey);
   if (inFlight) {
+    emitMonitoringEvent({
+      event: "cache_inflight_dedupe",
+      provider: "microsoft",
+      cacheKeyHash: hashForAudit(cacheKey),
+    });
     return cloneJson(await inFlight);
   }
 
@@ -1091,6 +1197,12 @@ async function withCachedJson(cacheKey, ttlMs, load) {
     safetyState.cache.set(cacheKey, {
       value: cloneJson(value),
       expiresAt: Date.now() + ttlMs,
+    });
+    emitMonitoringEvent({
+      event: "cache_store",
+      provider: "microsoft",
+      cacheKeyHash: hashForAudit(cacheKey),
+      ttlMs,
     });
     return cloneJson(value);
   } finally {
@@ -1231,6 +1343,13 @@ function openCircuit(key, reason) {
   safetyState.circuitBreakers.set(key, {
     reason,
     until: Date.now() + READONLY_SAFETY.circuitCooldownMs,
+  });
+  emitMonitoringEvent({
+    event: "circuit_opened",
+    provider: "microsoft",
+    contextKey: key,
+    reason,
+    cooldownMs: READONLY_SAFETY.circuitCooldownMs,
   });
 }
 
@@ -1670,6 +1789,12 @@ function maskId(value) {
   return `${text.slice(0, 3)}...${text.slice(-3)}`;
 }
 
+function sanitizeContextKey(value) {
+  return String(value || "")
+    .replace(/https?:\/\/[^\s]+/g, (url) => redactUrlForLog(url))
+    .replace(/\d{7,}/g, (id) => maskId(id));
+}
+
 function sanitizeForAudit(value, key = "") {
   const loweredKey = key.toLowerCase();
   if (
@@ -1684,10 +1809,14 @@ function sanitizeForAudit(value, key = "") {
   if (
     loweredKey === "accountid" ||
     loweredKey === "customerid" ||
+    loweredKey === "contextkey" ||
+    loweredKey === "circuitkey" ||
     loweredKey.endsWith("accountid") ||
     loweredKey.endsWith("customerid")
   ) {
-    return maskId(value);
+    return loweredKey === "contextkey" || loweredKey === "circuitkey"
+      ? sanitizeContextKey(value)
+      : maskId(value);
   }
 
   if (loweredKey.includes("url")) {
@@ -1802,17 +1931,89 @@ function sleep(ms) {
 }
 
 function audit(req, tool, args, result) {
-  console.log(
-    JSON.stringify({
-      event: "mcp_tool_call",
-      service: "summon-microsoft-ads-mcp",
-      tool,
-      clientKey: args.client_key || null,
-      result: sanitizeForAudit(result),
-      userAgent: req.get("user-agent") || null,
-      ts: new Date().toISOString(),
-    }),
+  const event = {
+    event: "mcp_tool_call",
+    service: SERVICE_NAME,
+    tool,
+    clientKey: args.client_key || null,
+    result: sanitizeForAudit(result),
+    userAgent: req.get("user-agent") || null,
+    ts: new Date().toISOString(),
+  };
+  console.log(JSON.stringify(event));
+  emitMonitoringEvent(event);
+}
+
+function outboundMonitoringEvent(event, endpointKey, requestUrl, options, meta, extra) {
+  return {
+    event,
+    provider: "microsoft",
+    endpointKey,
+    contextKey: meta.contextKey || endpointKey,
+    method: String(options.method || "GET").toUpperCase(),
+    host: requestUrl.hostname,
+    path: requestUrl.pathname,
+    ...extra,
+  };
+}
+
+function responseTrackingId(response) {
+  return (
+    response.headers.get("trackingid") ||
+    response.headers.get("x-ms-request-id") ||
+    response.headers.get("request-id") ||
+    response.headers.get("x-request-id") ||
+    null
   );
+}
+
+function emitMonitoringEvent(event) {
+  if (!MONITORING_WEBHOOK_URL) {
+    return;
+  }
+
+  const payload = sanitizeForAudit({
+    service: SERVICE_NAME,
+    environment: MONITORING_ENVIRONMENT,
+    ts: new Date().toISOString(),
+    ...event,
+  });
+
+  queueMicrotask(() => {
+    postMonitoringEventAttempt(payload).catch((error) => {
+      console.warn(`Monitoring webhook failed: ${safeErrorMessage(error)}`);
+    });
+  });
+}
+
+async function postMonitoringEventAttempt(payload) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MONITORING_TIMEOUT_MS);
+  const headers = { "content-type": "application/json" };
+  if (MONITORING_WEBHOOK_SECRET) {
+    headers["x-summon-monitoring-secret"] = MONITORING_WEBHOOK_SECRET;
+  }
+
+  try {
+    await fetch(MONITORING_WEBHOOK_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function hashForAudit(value) {
+  return createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
+}
+
+function safeErrorMessage(error) {
+  return String(error?.message || error || "unknown error")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    .slice(0, 500);
 }
 
 function rpcResult(id, result) {

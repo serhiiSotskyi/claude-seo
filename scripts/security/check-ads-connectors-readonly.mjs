@@ -8,7 +8,10 @@ const serviceFiles = [
   "services/summon-microsoft-ads-mcp/server.mjs",
 ];
 
-const allowedRawFetchFunctions = new Set(["executeSafeFetchAttempt"]);
+const allowedRawFetchFunctions = new Set([
+  "executeSafeFetchAttempt",
+  "postMonitoringEventAttempt",
+]);
 const allowedApiHosts = new Set([
   "oauth2.googleapis.com",
   "analyticsdata.googleapis.com",
